@@ -1,64 +1,129 @@
-# Yama Bili Danmaku V3
+# VRChat 哔哩哔哩弹幕组件
 
-This build avoids the old package asmdef/U# assembly issues and uses a unique namespace:
-`YamaBiliDanmakuV3.YamaBiliDanmakuModule3`.
+[简体中文](README.md) | [English](README_EN.md)
 
-Install:
-1. Delete old folders: `Assets/YamaBiliDanmaku`, `Assets/YamaBiliDanmakuV2`, and any `Packages/yama-bili-danmaku*` folders.
-2. Put this `YamaBiliDanmakuV3` folder directly under your Unity project's `Assets/` folder.
-3. Run `Assets > Reimport All`.
-4. Run `Yamadev > YamaPlayer > Fix Bili Danmaku U# Program Asset`.
-5. Run `UdonSharp > Compile All UdonSharp Programs`.
-6. Run `Yamadev > YamaPlayer > Create Bili Danmaku Module`.
+为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
-If the auto fix fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runtime`, keep the generated `.asset`, and set its Source C# Script to `YamaBiliDanmakuModule3.cs`.
+当前稳定版为 **v5.0.0**，目前已适配并测试 **YamaPlayer**。项目采用通用名称，后续计划适配更多 VRChat 世界播放器。
 
+> 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
-V3 fontfix: Removed runtime TextMeshProUGUI.fontSize / preferredWidth / ForceMeshUpdate calls because they are not exposed to Udon in some SDK versions. Font size is approximated through RectTransform.localScale and text width estimation.
+## 功能
 
-V4 status/control: Status text now auto-hides after 2 seconds. The module exposes `ToggleDanmaku()`, `EnableDanmaku()`, and `DisableDanmaku()` for custom world UI wiring, but no built-in toggle button is generated.
+- 根据播放器当前 URL 自动请求对应弹幕
+- 支持滚动、顶部和底部弹幕
+- 跟随视频播放进度同步，正确处理暂停和继续播放
+- 使用 `RectMask2D` 在播放器画面边缘裁切弹幕
+- 支持彩色弹幕、黑色描边和轻微加粗
+- 可调整字体缩放、透明度、轨道数、速度和时间偏移
+- 仅更新正在显示的弹幕，降低每帧遍历开销
+- URL 输入框可预填自定义解析服务前缀
+- 提供弹幕开启、关闭和切换事件，方便连接世界内自定义 UI
 
-V7 unified player URL: New rigs enable `Load From Current YamaPlayer Url` by default. The module reads the bound YamaPlayer's current `VRCUrl` and requests that same URL for danmaku. This is intended for server endpoints like `https://danmaku.paulkoishi.com/player/?url=...` that return video redirects for video players and `#YBDM/1` text for `VRCStringDownloader`. `Fallback Danmaku Url` is still supported as a backup.
+## 环境要求
 
-V7.1 UdonSharp fix: Removed C# pattern matching from current URL detection because some UdonSharp compiler versions crash on `object is VRCUrl` expressions.
+- Unity 与当前 VRChat Worlds SDK 兼容的版本
+- VRChat Worlds SDK（包含 UdonSharp）
+- TextMeshPro
+- YamaPlayer（当前 v5.0.0 适配器所需）
+- 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
-V7.2 render polish: `Danmaku Lanes` now uses `RectMask2D` so text is clipped at the screen edge. Default danmaku font size is slightly larger, and runtime text alpha defaults to 0.64.
+默认解析服务前缀：
 
-V7.3 performance: Active danmaku texts are tracked in a compact active-index list, so each frame updates only visible/moving danmaku instead of scanning the whole text pool. Timing and frame rate behavior are unchanged.
+```text
+https://danmaku.paulkoishi.com/player/?url=
+```
 
-V7.4 alpha: Default danmaku text alpha and outline alpha are now 0.72.
+## 安装
 
-V7.5 sizing/alpha: Default danmaku text alpha and outline alpha are now 0.66. Newly generated canvases use 1700x925 instead of 1600x900.
+1. 下载 [v5.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v5.0.0)。
+2. 删除旧版目录：
+   - `Assets/YamaBiliDanmaku`
+   - `Assets/YamaBiliDanmakuV2`
+   - `Packages/yama-bili-danmaku*`
+3. 将 `YamaBiliDanmakuV3` 文件夹放入 Unity 项目的 `Assets/`。
+4. 执行 `Assets > Reimport All`。
+5. 执行 `Yamadev > YamaPlayer > Fix Bili Danmaku U# Program Asset`。
+6. 执行 `UdonSharp > Compile All UdonSharp Programs`。
+7. 选中目标 YamaPlayer，执行 `Yamadev > YamaPlayer > Create Bili Danmaku Module`。
 
-V7.6 alpha control: `Text Alpha` is exposed under Appearance for Inspector tuning, and `SetDanmakuAlpha(float)` can update active danmaku opacity at runtime.
+## 手动绑定 URL 输入框
 
-V7.7 defaults: Newly generated canvases use 1750x980 by default, and newly generated modules default `Font Scale` to 1.1.
+预输入前缀组件的两个 URL 输入框必须在 Inspector 中**手动拖入**。不要依赖自动查找或组件顺序猜测，不同 YamaPlayer 版本或自定义预制体的层级可能不同。
 
-V7.8 URL prefix helper: Newly generated rigs include `Bili URL Prefix Helper`, which fills an empty YamaPlayer URL field with `https://danmaku.paulkoishi.com/player/?url=` when a player clicks/selects the URL input. Players can manually delete the prefix; `Enable URL Prefix On Input` controls this feature and is on by default. `Keep Prefix When Empty` is off by default.
+| Inspector 字段 | YamaPlayer 默认对象路径 |
+| --- | --- |
+| `Top Url Input Field` | `ScreenUI/Canvas/Control/Main/Top/UrlInput` |
+| `Bottom Url Input Field` | `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput` |
 
-V7.9 prefix settings: `Bili URL Prefix Helper` exposes `Enable URL Prefix On Input` and editable `Url Prefix` fields in the Inspector, so the click-to-fill behavior can be disabled or pointed at another domain without code changes. `Url Prefix` is stored as a `VRCUrl` for UdonSharp compatibility.
+两个对象都应拖入其自身的 `VRC URL Input Field` 组件。
 
-V7.10 Udon URL fix: Removed runtime `new VRCUrl(string)` usage from `Bili URL Prefix Helper`; UdonSharp does not expose that constructor. The prefix is now stored directly as a serialized `VRCUrl`.
+前缀设置：
 
-V7.11 uploaded-world prefix fix: `Bili URL Prefix Helper` now also watches URL input field activation and fills the prefix once when a YamaPlayer input panel opens. This keeps the click-to-fill behavior working in uploaded VRChat worlds even when UI pointer/select events are not delivered reliably.
+- `Enable Url Prefix On Input`：控制预输入功能，默认开启。
+- `Url Prefix`：自定义解析服务地址。
+- `Keep Prefix When Empty`：持续补回空输入框；若希望玩家可以手动删除前缀，请保持关闭。
 
-V7.12 editor visual style switches: Adds Inspector fields under `Editor Visual Style` for bold text and TMP outline strength. Runtime render logic is unchanged except for these serialized settings fields; the actual TMP style is applied by the Unity editor when creating/wiring the module. Heavy outline is enabled by default, while bold text is off by default to keep the danmaku from becoming too thick. After changing style settings on an existing module, select it and run `Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style`.
+## 播放视频
 
-Stable 4: Keeps the third-build renderer path, soft default style, and editor-applied heavy outline. The URL prefix helper now refills the prefix when a YamaPlayer URL input changes from non-empty to empty, which covers cases where the player clears the input field after playback starts.
+玩家在 YamaPlayer 输入框中填写：
 
-TMP outline fix: The editor visual style now creates/updates `Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku TMP Outline.mat`, enables the `OUTLINE_ON` shader keyword, writes `_OutlineWidth` and `_OutlineColor`, sets `extraPadding`, and calls `UpdateMeshPadding()` on every `Danmaku Text`. This is the actual TextMeshPro outline path; Unity UI `Outline` components are not used.
+```text
+https://danmaku.paulkoishi.com/player/?url=<哔哩哔哩视频链接>
+```
 
-Bilibili-style semibold outline: Default text alpha is `0.72`, outline width is `0.11`, outline alpha stays `0.7`, material face dilate is `0.012`, and TMP bold is enabled with a low material `_WeightBold = 0.28`. This makes the glyphs slightly heavier without using the overly thick default TMP bold weight.
+同一 URL 由视频播放器请求时返回视频解析结果，由 `VRCStringDownloader` 请求时返回弹幕文本，因此不需要 `room` 或世界实例标识。
 
-Colored danmaku outline fix: The TMP material also enables `UNDERLAY_ON` with zero offset, black underlay color, `Underlay Dilate = 0.16`, and `Underlay Softness = 0.03`. This adds a black backing layer inside the same TMP shader so colored danmaku, such as red text, has visible edge contrast without creating duplicate TextMeshPro objects.
+## 常用设置
 
-Pause resume fix: Active danmaku timers now compensate for the amount of real time spent paused. This prevents visible danmaku from jumping forward when YamaPlayer resumes playback after a pause.
+| 设置 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `Lane Count` | 12 | 弹幕轨道数量 |
+| `Scroll Duration` | 8 | 滚动弹幕通过画面的秒数 |
+| `Static Duration` | 4 | 顶部/底部弹幕停留秒数 |
+| `Time Offset Ms` | 0 | 弹幕时间校正 |
+| `Max Danmaku Lines` | 1600 | 单次加载的最大弹幕条数 |
+| `Font Scale` | 1.1 | 字体显示缩放 |
+| `Text Alpha` | 0.72 | 字体透明度 |
+| `Outline Width` | 0.11 | TMP 黑色描边宽度 |
+| `Outline Alpha` | 0.7 | 描边透明度 |
 
-## URL prefix helper setup
+修改现有组件的描边或粗体设置后，选中组件并执行：
 
-Assign YamaPlayer's two `VRC URL Input Field` components manually in the Inspector:
+```text
+Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
+```
 
-- `Top Url Input Field`: `ScreenUI/Canvas/Control/Main/Top/UrlInput`
-- `Bottom Url Input Field`: `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput`
+## 自定义弹幕开关
 
-Do not rely on component-order auto-detection. Different YamaPlayer versions and customized prefabs can use a different hierarchy or component order.
+组件不生成固定样式的开关。可以让世界中的按钮调用以下公开事件：
+
+```text
+ToggleDanmaku
+EnableDanmaku
+DisableDanmaku
+```
+
+## 常见问题
+
+### 找不到有效的 U# Program Asset
+
+依次执行：
+
+```text
+Yamadev > YamaPlayer > Fix Bili Danmaku U# Program Asset
+UdonSharp > Compile All UdonSharp Programs
+```
+
+如果仍然失败，在 `Assets/YamaBiliDanmakuV3/Runtime` 中手动创建 U# Script，保留生成的 `.asset`，并将其 Source C# Script 指向 `YamaBiliDanmakuModule3.cs`。
+
+### 显示 Loaded 但没有弹幕
+
+- 确认播放器当前 URL 使用支持弹幕响应的解析服务。
+- 确认 `Controller`、`Lane Root` 和 `Text Pool` 已正确绑定。
+- 确认 `Danmaku Enabled` 已开启。
+- 不要混用旧版组件和旧版 U# Program Asset。
+
+## 当前版本说明
+
+v5.0.0 是当前稳定基线，包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
