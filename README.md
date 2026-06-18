@@ -8,6 +8,8 @@
 
 [vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) 是 **PaulKoiPlayer** 的 VRChat 哔哩哔哩弹幕组件，为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
+示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
+
 当前稳定版为 **v1.0.0**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
