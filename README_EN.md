@@ -88,6 +88,8 @@ The same endpoint returns video resolution data to the video player and danmaku 
 
 ## Common settings
 
+> **These settings are configured in the Unity Editor only.** The current release does not generate an interactive settings panel inside the VRChat world. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset must be configured by the world author in the Unity Inspector and saved before uploading the world.
+
 | Setting | Default | Description |
 | --- | ---: | --- |
 | `Lane Count` | 12 | Number of danmaku lanes |
@@ -122,13 +124,15 @@ Changing the Inspector values without running the Apply command does not update 
 
 ## Custom danmaku toggle
 
-The component does not generate a fixed toggle UI. Connect a world button to one of these public events:
+The current release does not automatically generate a player-facing danmaku toggle or any other interactive control panel. These are Udon public events for world authors:
 
 ```text
 ToggleDanmaku
 EnableDanmaku
 DisableDanmaku
 ```
+
+To let players toggle danmaku in the world, the world author must create a Button or Toggle in Unity and manually bind its event to the danmaku module. Without that setup, the uploaded world has no interactive danmaku controls.
 
 ## Troubleshooting
 

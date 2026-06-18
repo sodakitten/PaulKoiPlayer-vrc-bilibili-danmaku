@@ -88,6 +88,8 @@ https://danmaku.paulkoishi.com/player/?url=<哔哩哔哩视频链接>
 
 ## 常用设置
 
+> **这些设置只能在 Unity 编辑器中调整。** 当前版本不会在 VRChat 世界里生成可交互的设置面板。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移都需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
+
 | 设置 | 默认值 | 说明 |
 | --- | ---: | --- |
 | `Lane Count` | 12 | 弹幕轨道数量 |
@@ -122,13 +124,15 @@ Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 
 ## 自定义弹幕开关
 
-组件不生成固定样式的开关。可以让世界中的按钮调用以下公开事件：
+当前版本不会自动生成玩家可点击的弹幕开关或其他互动控制组件。下面这些只是供世界作者使用的 Udon 公开事件：
 
 ```text
 ToggleDanmaku
 EnableDanmaku
 DisableDanmaku
 ```
+
+如需让玩家在世界内开关弹幕，世界作者必须在 Unity 中自行创建按钮或 Toggle，再将其事件手动绑定到弹幕模块。没有完成这一步时，上传后的世界里不会出现可互动的弹幕控制界面。
 
 ## 常见问题
 
