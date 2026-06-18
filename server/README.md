@@ -8,6 +8,8 @@
 https://你的域名/player/?url=<视频或音乐链接>
 ```
 
+服务端与 Unity 组件统一使用 **v1.0.0**，可在同一个 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载。
+
 对于普通视频请求，服务返回可播放媒体直链的 `302` 跳转；对于 `VRCStringDownloader` 弹幕请求，同一地址返回 `#YBDM/1` 文本。该设计不依赖 `room`、世界名称或实例 ID，可以同时处理不同世界和不同视频。
 
 ## 支持内容

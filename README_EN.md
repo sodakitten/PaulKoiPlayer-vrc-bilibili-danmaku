@@ -4,7 +4,7 @@
 
 A Bilibili danmaku loader, synchronizer, and renderer for video players in VRChat worlds.
 
-The current stable release is **v5.0.0**. It is currently integrated and tested with **YamaPlayer**. The project uses a player-neutral name because support for additional VRChat video players is planned.
+The current stable release is **v1.0.0**. It is currently integrated and tested with **YamaPlayer**. The project uses a player-neutral name because support for additional VRChat video players is planned.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
@@ -12,6 +12,13 @@ The current stable release is **v5.0.0**. It is currently integrated and tested 
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
 - [`server/`](server/README_EN.md): the Dockerized media resolver and danmaku proxy.
+
+## Downloads
+
+Unified release page: [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
+
+- `vrc-bilibili-danmaku-unity-v1.0.0.zip`: Unity/UdonSharp component.
+- `vrc-bilibili-danmaku-server-v1.0.0.zip`: Docker server.
 
 ## Features
 
@@ -30,7 +37,7 @@ The current stable release is **v5.0.0**. It is currently integrated and tested 
 - A Unity version supported by the current VRChat Worlds SDK
 - VRChat Worlds SDK, including UdonSharp
 - TextMeshPro
-- YamaPlayer, for the current v5.0.0 adapter
+- YamaPlayer, for the current v1.0.0 adapter
 - A parser service that returns danmaku in `#YBDM/1` text format
 
 Default parser prefix:
@@ -41,7 +48,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Download the [v5.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v5.0.0).
+1. Download the Unity component from the [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0).
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -93,11 +100,25 @@ The same endpoint returns video resolution data to the video player and danmaku 
 | `Outline Width` | 0.11 | Black TMP outline width |
 | `Outline Alpha` | 0.7 | Outline opacity |
 
-After changing outline or bold options on an existing module, select it and run:
+### Applying outline and font-weight changes
+
+The bold, outline width, and outline alpha values under `Editor Visual Style` are editor-applied material settings, not live runtime properties. After changing an existing module, apply the values to its TextMeshPro material:
+
+1. Select the generated `Bili Danmaku Module` object in the Hierarchy.
+2. In `Yama Bili Danmaku Module 3 > Editor Visual Style`, change:
+   - `Editor Bold Text`
+   - `Editor Heavy Outline Enabled`
+   - `Editor Outline Width`
+   - `Editor Outline Alpha`
+3. Keep that object selected and run:
 
 ```text
 Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 ```
+
+4. Confirm the success message in the Console before entering Play Mode or uploading the world again.
+
+Changing the Inspector values without running the Apply command does not update the material used by existing danmaku text objects, so the outline or weight may appear unchanged. Newly generated modules receive the current default style during creation.
 
 ## Custom danmaku toggle
 
@@ -131,4 +152,4 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 
 ## Current release
 
-v5.0.0 is the stable baseline. It includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.
+v1.0.0 is the first unified release containing both the Unity component and its matching Docker server. The component includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.

@@ -4,7 +4,7 @@
 
 为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
-当前稳定版为 **v5.0.0**，目前已适配并测试 **YamaPlayer**。项目采用通用名称，后续计划适配更多 VRChat 世界播放器。
+当前稳定版为 **v1.0.0**，目前已适配并测试 **YamaPlayer**。项目采用通用名称，后续计划适配更多 VRChat 世界播放器。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
@@ -12,6 +12,13 @@
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
 - [`server/`](server/README.md)：视频解析与弹幕代理服务，提供 Docker 部署。
+
+## 下载
+
+统一版本页：[v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
+
+- `vrc-bilibili-danmaku-unity-v1.0.0.zip`：Unity / UdonSharp 组件。
+- `vrc-bilibili-danmaku-server-v1.0.0.zip`：Docker 服务端。
 
 ## 功能
 
@@ -30,7 +37,7 @@
 - Unity 与当前 VRChat Worlds SDK 兼容的版本
 - VRChat Worlds SDK（包含 UdonSharp）
 - TextMeshPro
-- YamaPlayer（当前 v5.0.0 适配器所需）
+- YamaPlayer（当前 v1.0.0 适配器所需）
 - 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
 默认解析服务前缀：
@@ -41,7 +48,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. 下载 [v5.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v5.0.0)。
+1. 从 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 Unity 组件。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -93,11 +100,25 @@ https://danmaku.paulkoishi.com/player/?url=<哔哩哔哩视频链接>
 | `Outline Width` | 0.11 | TMP 黑色描边宽度 |
 | `Outline Alpha` | 0.7 | 描边透明度 |
 
-修改现有组件的描边或粗体设置后，选中组件并执行：
+### 让描边和粗体修改真正生效
+
+`Editor Visual Style` 下的粗体、描边宽度和描边透明度不是运行时实时修改项。调整现有模块后，必须重新把设置应用到 TextMeshPro 材质：
+
+1. 在 Hierarchy 中选中已经生成的 `Bili Danmaku Module` 对象。
+2. 在 `Yama Bili Danmaku Module 3` 组件的 `Editor Visual Style` 中修改：
+   - `Editor Bold Text`
+   - `Editor Heavy Outline Enabled`
+   - `Editor Outline Width`
+   - `Editor Outline Alpha`
+3. 保持该对象处于选中状态，执行：
 
 ```text
 Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 ```
+
+4. 检查 Console 出现应用成功提示，再进入 Play Mode 或重新上传世界。
+
+只修改 Inspector 数值但不执行上述 Apply 菜单，已有弹幕文字的材质不会更新，看起来就会像描边或粗细没有变化。新生成的模块会在创建时自动应用当前默认样式。
 
 ## 自定义弹幕开关
 
@@ -131,4 +152,4 @@ UdonSharp > Compile All UdonSharp Programs
 
 ## 当前版本说明
 
-v5.0.0 是当前稳定基线，包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
+v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docker 服务端。组件包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
