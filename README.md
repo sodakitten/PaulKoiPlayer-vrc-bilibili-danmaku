@@ -16,6 +16,12 @@
 - TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
 - Docker：只在你要自行部署 `server/` 后端时需要；只使用公开解析服务时不需要。
 
+如果不想自行部署后端，可以直接使用已经部署好的公共服务。在 `Bili URL Prefix Helper` 的 `Url Prefix` 中填写：
+
+```text
+https://danmaku.paulkoishi.com/player/?url=
+```
+
 ## 项目结构
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
@@ -88,7 +94,7 @@ https://danmaku.paulkoishi.com/player/?url=
 前缀设置：
 
 - `Enable Url Prefix On Input`：控制预输入功能，默认开启。
-- `Url Prefix`：自定义解析服务地址。
+- `Url Prefix`：自定义解析服务地址；不自托管时可填写 `https://danmaku.paulkoishi.com/player/?url=`。
 - `Keep Prefix When Empty`：持续补回空输入框；若希望玩家可以手动删除前缀，请保持关闭。
 
 ## 播放视频

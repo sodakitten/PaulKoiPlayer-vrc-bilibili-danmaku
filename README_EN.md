@@ -16,6 +16,12 @@ If your VRChat world was created with VCC, the project usually already includes 
 - TextMeshPro: TMP Essentials must be imported in the Unity project.
 - Docker: only required when self-hosting the `server/` backend. It is not required when using an existing public parser service.
 
+If you do not want to self-host the backend, you can use the already deployed public service. Set `Bili URL Prefix Helper > Url Prefix` to:
+
+```text
+https://danmaku.paulkoishi.com/player/?url=
+```
+
 ## Repository layout
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
@@ -88,7 +94,7 @@ Drag the `VRC URL Input Field` component from each object into the corresponding
 Prefix settings:
 
 - `Enable Url Prefix On Input`: enables the prefix helper; on by default.
-- `Url Prefix`: changes the parser service URL.
+- `Url Prefix`: changes the parser service URL. If you are not self-hosting, use `https://danmaku.paulkoishi.com/player/?url=`.
 - `Keep Prefix When Empty`: continuously restores empty inputs. Leave this off when players should be allowed to delete the prefix.
 
 ## Playing a video
