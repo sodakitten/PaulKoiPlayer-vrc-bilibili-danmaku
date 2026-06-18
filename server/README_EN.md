@@ -1,8 +1,8 @@
-# VRChat Danmaku Resolver Server
+# PaulKoiPlayer Danmaku Resolver Server
 
 [简体中文](README.md) | [English](README_EN.md) | [Project home](../README_EN.md)
 
-This Docker service accompanies the Unity danmaku component. A VRChat world only needs one endpoint:
+This Docker resolver service accompanies [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) / **PaulKoiPlayer**. A VRChat world only needs one endpoint:
 
 ```text
 https://your-domain.example/player/?url=<video or music URL>

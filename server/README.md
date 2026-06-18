@@ -1,8 +1,8 @@
-# VRChat 弹幕解析服务
+# PaulKoiPlayer 弹幕解析服务
 
 [简体中文](README.md) | [English](README_EN.md) | [返回项目主页](../README.md)
 
-这是与 Unity 弹幕组件配套的 Docker 服务。VRChat 世界只需要使用一个入口：
+这是 [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) / **PaulKoiPlayer** 配套的 Docker 解析服务。VRChat 世界只需要使用一个入口：
 
 ```text
 https://你的域名/player/?url=<视频或音乐链接>
