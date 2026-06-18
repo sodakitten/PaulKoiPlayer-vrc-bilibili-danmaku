@@ -1,0 +1,8 @@
+# Unity-generated metadata is created after copying this folder into Assets.
+*.meta
+
+# Local editor and OS files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
