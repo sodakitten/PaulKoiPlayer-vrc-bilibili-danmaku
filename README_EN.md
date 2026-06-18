@@ -22,6 +22,8 @@ If you do not want to self-host the backend, you can use the already deployed pu
 https://danmaku.paulkoishi.com/player/?url=
 ```
 
+Public service status page: [https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/). If this page cannot be reached, the current public service is unavailable.
+
 This public endpoint currently supports:
 
 - Bilibili video resolution, with matching Bilibili danmaku returned to this component.
@@ -198,6 +200,7 @@ v1.0.0 is the first unified release containing both the Unity component and its 
 
 ## Acknowledgements and related links
 
+- [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/): current public parser service status page. If it cannot be reached, the public service is unavailable.
 - [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player currently integrated and tested by v1.0.0.
 - [music.znnu.com](https://music.znnu.com/): the third-party service used by the server for NetEase Cloud Music resolution.
 - [yionchi](https://github.com/yionchi): author of the related `music.znnu.com` service.

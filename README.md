@@ -22,6 +22,8 @@
 https://danmaku.paulkoishi.com/player/?url=
 ```
 
+公共服务状态页：[https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/)。如果该页面无法访问，说明当前公共服务不可用。
+
 这个公共入口目前支持：
 
 - B 站视频解析，并可为本组件返回对应 B 站弹幕。
@@ -198,6 +200,7 @@ v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docke
 
 ## 鸣谢与相关链接
 
+- [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/)：当前公共解析服务状态页；如果无法访问，说明当前公共服务不可用。
 - [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 v1.0.0 适配并测试的 VRChat 视频播放器。
 - [music.znnu.com](https://music.znnu.com/)：服务端网易云音乐解析所使用的第三方服务。
 - [yionchi](https://github.com/yionchi)：`music.znnu.com` 相关服务作者。
