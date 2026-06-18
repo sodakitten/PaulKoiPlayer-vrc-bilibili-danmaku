@@ -60,6 +60,8 @@ https://danmaku.paulkoishi.com/player/?url=
 6. Run `UdonSharp > Compile All UdonSharp Programs`.
 7. Select the target YamaPlayer and run `Yamadev > YamaPlayer > Create Bili Danmaku Module`.
 
+![Create the danmaku module from the YamaPlayer context menu](docs/images/install-yamaplayer-menu.png)
+
 ## Manually assign the URL inputs
 
 The two URL fields used by the prefix helper must be assigned **manually** in the Inspector. Do not rely on automatic lookup or component-order guessing. The hierarchy may differ between YamaPlayer releases and customized prefabs.
@@ -70,6 +72,8 @@ The two URL fields used by the prefix helper must be assigned **manually** in th
 | `Bottom Url Input Field` | `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput` |
 
 Drag the `VRC URL Input Field` component from each object into the corresponding field.
+
+![Manually assign the two YamaPlayer URL input fields](docs/images/url-prefix-helper-bindings.png)
 
 Prefix settings:
 
@@ -118,6 +122,8 @@ The bold, outline width, and outline alpha values under `Editor Visual Style` ar
 ```text
 Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 ```
+
+![Apply the danmaku outline and font-weight visual style](docs/images/apply-visual-style-menu.png)
 
 4. Confirm the success message in the Console before entering Play Mode or uploading the world again.
 

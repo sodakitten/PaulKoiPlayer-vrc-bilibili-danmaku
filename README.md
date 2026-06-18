@@ -60,6 +60,8 @@ https://danmaku.paulkoishi.com/player/?url=
 6. 执行 `UdonSharp > Compile All UdonSharp Programs`。
 7. 选中目标 YamaPlayer，执行 `Yamadev > YamaPlayer > Create Bili Danmaku Module`。
 
+![在 YamaPlayer 上创建弹幕模块](docs/images/install-yamaplayer-menu.png)
+
 ## 手动绑定 URL 输入框
 
 预输入前缀组件的两个 URL 输入框必须在 Inspector 中**手动拖入**。不要依赖自动查找或组件顺序猜测，不同 YamaPlayer 版本或自定义预制体的层级可能不同。
@@ -70,6 +72,8 @@ https://danmaku.paulkoishi.com/player/?url=
 | `Bottom Url Input Field` | `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput` |
 
 两个对象都应拖入其自身的 `VRC URL Input Field` 组件。
+
+![手动绑定 YamaPlayer 的两个 URL 输入框](docs/images/url-prefix-helper-bindings.png)
 
 前缀设置：
 
@@ -118,6 +122,8 @@ https://danmaku.paulkoishi.com/player/?url=<哔哩哔哩视频链接>
 ```text
 Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 ```
+
+![应用弹幕描边和粗体视觉样式](docs/images/apply-visual-style-menu.png)
 
 4. 检查 Console 出现应用成功提示，再进入 Play Mode 或重新上传世界。
 
