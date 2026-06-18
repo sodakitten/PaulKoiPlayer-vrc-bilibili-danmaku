@@ -165,6 +165,12 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 
 v1.0.0 is the first unified release containing both the Unity component and its matching Docker server. The component includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.
 
+## Acknowledgements and related links
+
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player currently integrated and tested by v1.0.0.
+- [music.znnu.com](https://music.znnu.com/): the third-party service used by the server for NetEase Cloud Music resolution.
+- [yionchi](https://github.com/yionchi): author of the related `music.znnu.com` service.
+
 ## Roadmap
 
 Future releases will continue to add in-world interaction, including a player-facing danmaku toggle, density/quantity controls, full-screen and half-screen display areas, and a compact VRChat-friendly settings panel. These additions will be built around the current stable loading, synchronization, and rendering path. Until they are released, v1.0.0 remains configured by the world author in the Unity Inspector.

@@ -165,6 +165,12 @@ UdonSharp > Compile All UdonSharp Programs
 
 v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docker 服务端。组件包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
 
+## 鸣谢与相关链接
+
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 v1.0.0 适配并测试的 VRChat 视频播放器。
+- [music.znnu.com](https://music.znnu.com/)：服务端网易云音乐解析所使用的第三方服务。
+- [yionchi](https://github.com/yionchi)：`music.znnu.com` 相关服务作者。
+
 ## 后续计划
 
 后续版本会继续补充世界内互动功能，计划方向包括玩家可操作的弹幕开关、弹幕密度/数量控制、全屏与半屏显示区域，以及适合 VRChat 的简洁设置界面。实现时会优先保护当前稳定的加载、同步和渲染路径；在这些功能正式发布前，v1.0.0 仍需要由世界作者在 Unity Inspector 中完成配置。
