@@ -17,6 +17,7 @@ https://你的域名/player/?url=<视频或音乐链接>
 - 哔哩哔哩视频链接、BV 号和 av 号
 - 哔哩哔哩 MP4 直链解析
 - XML 与 protobuf 分段弹幕，输出 `#YBDM/1`
+- 哔哩哔哩直播解析；直播暂不返回弹幕
 - 网易云音乐单曲、歌单和 `163cn.tv` 短链接
 - 网易云歌单使用 `p` 或 `page` 选择曲目
 - 视频信息、直链、弹幕和歌单的内存缓存
@@ -74,6 +75,14 @@ https://你的域名/player/?url=BV1PV7m6DE51
 https://你的域名/player/?url=https://www.bilibili.com/video/BV1PV7m6DE51
 ```
 
+### 哔哩哔哩直播
+
+```text
+https://你的域名/player/?url=https://live.bilibili.com/123456
+```
+
+直播请求只做播放解析，暂不返回直播弹幕。
+
 强制返回弹幕，适合诊断：
 
 ```text
@@ -99,7 +108,7 @@ https://你的域名/player/?url=music.163.com/playlist?id=487424073&p=2
 https://你的域名/player/?url=163cn.tv/xxxx
 ```
 
-歌单默认播放 `p=1`。网易云网页常见的 `#/song` 与 `#/playlist` 是浏览器片段，不能直接发送到服务器，请改用无 `#` 的地址，或对内层 URL 完整编码。
+歌单默认播放 `p=1`。如需播放歌单里的其他曲目，请在外层 URL 后附加 `&p=数字`，例如 `&p=2` 表示第 2 首。网易云网页常见的 `#/song` 与 `#/playlist` 是浏览器片段，不能直接发送到服务器，请改用无 `#` 的地址，或对内层 URL 完整编码。
 
 ## 接口
 

@@ -22,6 +22,13 @@ If you do not want to self-host the backend, you can use the already deployed pu
 https://danmaku.paulkoishi.com/player/?url=
 ```
 
+This public endpoint currently supports:
+
+- Bilibili video resolution, with matching Bilibili danmaku returned to this component.
+- Bilibili live stream resolution, without live danmaku for now.
+- NetEase Cloud Music song resolution.
+- NetEase Cloud Music playlist resolution. Append `&p=<number>` to select the playlist item, for example `&p=2` for the second track.
+
 ## Repository layout
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
@@ -103,6 +110,12 @@ Enter the following URL in YamaPlayer:
 
 ```text
 https://danmaku.paulkoishi.com/player/?url=<Bilibili video URL>
+```
+
+You can also enter a Bilibili live stream URL, a NetEase song URL, or a NetEase playlist URL. For NetEase playlists, add `&p=<number>` to select the track:
+
+```text
+https://danmaku.paulkoishi.com/player/?url=<NetEase playlist URL>&p=1
 ```
 
 The same endpoint returns video resolution data to the video player and danmaku text to `VRCStringDownloader`. No room name or world instance identifier is required.

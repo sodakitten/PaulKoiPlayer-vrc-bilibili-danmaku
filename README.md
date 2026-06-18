@@ -22,6 +22,13 @@
 https://danmaku.paulkoishi.com/player/?url=
 ```
 
+这个公共入口目前支持：
+
+- B 站视频解析，并可为本组件返回对应 B 站弹幕。
+- B 站直播解析，但直播暂不返回弹幕。
+- 网易云音乐单曲解析。
+- 网易云音乐歌单解析；歌单需要在 URL 后附加 `&p=数字`，表示播放歌单里的第几首，例如 `&p=2` 表示第 2 首。
+
 ## 项目结构
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
@@ -103,6 +110,12 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ```text
 https://danmaku.paulkoishi.com/player/?url=<哔哩哔哩视频链接>
+```
+
+也可以填写 B 站直播链接、网易云单曲链接，或网易云歌单链接。网易云歌单需要额外加 `&p=数字` 选择第几首：
+
+```text
+https://danmaku.paulkoishi.com/player/?url=<网易云歌单链接>&p=1
 ```
 
 同一 URL 由视频播放器请求时返回视频解析结果，由 `VRCStringDownloader` 请求时返回弹幕文本，因此不需要 `room` 或世界实例标识。

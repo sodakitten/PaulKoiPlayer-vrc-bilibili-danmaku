@@ -17,6 +17,7 @@ For normal video requests, the server returns a `302` redirect to a playable med
 - Bilibili video URLs, BV IDs, and av IDs
 - Bilibili MP4 media URL resolution
 - XML and segmented protobuf danmaku exported as `#YBDM/1`
+- Bilibili live stream resolution, without live danmaku for now
 - NetEase Cloud Music songs, playlists, and `163cn.tv` short links
 - Playlist track selection with `p` or `page`
 - In-memory caches for metadata, media URLs, danmaku, and playlists
@@ -74,6 +75,14 @@ https://your-domain.example/player/?url=BV1PV7m6DE51
 https://your-domain.example/player/?url=https://www.bilibili.com/video/BV1PV7m6DE51
 ```
 
+### Bilibili live streams
+
+```text
+https://your-domain.example/player/?url=https://live.bilibili.com/123456
+```
+
+Live stream requests only resolve playback. Live danmaku is not returned yet.
+
 Force a danmaku response for diagnostics:
 
 ```text
@@ -99,7 +108,7 @@ https://your-domain.example/player/?url=music.163.com/playlist?id=487424073&p=2
 https://your-domain.example/player/?url=163cn.tv/xxxx
 ```
 
-Playlists default to `p=1`. NetEase web URLs commonly use `#/song` and `#/playlist` fragments. Fragments are not sent to servers, so use the non-hash form or fully encode the nested URL.
+Playlists default to `p=1`. To play another playlist item, append `&p=<number>` to the outer URL, for example `&p=2` for the second track. NetEase web URLs commonly use `#/song` and `#/playlist` fragments. Fragments are not sent to servers, so use the non-hash form or fully encode the nested URL.
 
 ## Endpoints
 
