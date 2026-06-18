@@ -29,6 +29,8 @@ This public endpoint currently supports:
 - NetEase Cloud Music song resolution.
 - NetEase Cloud Music playlist resolution. Append `&p=<number>` to select the playlist item, for example `&p=2` for the second track.
 
+If you self-host this project's `server/` backend, replace the domain with your own domain to get the same resolver features.
+
 ## Repository layout
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.

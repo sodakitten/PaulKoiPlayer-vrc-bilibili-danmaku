@@ -8,6 +8,8 @@ This Docker service accompanies the Unity danmaku component. A VRChat world only
 https://your-domain.example/player/?url=<video or music URL>
 ```
 
+After self-hosting this backend, set `Bili URL Prefix Helper > Url Prefix` in the Unity component to your own domain, for example `https://your-domain.example/player/?url=`, to get the same resolver features as the public service.
+
 The server and Unity component share version **v1.0.0** and are downloadable from the same [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0).
 
 For normal video requests, the server returns a `302` redirect to a playable media URL. For `VRCStringDownloader` requests, the same endpoint returns `#YBDM/1` text. No room name, world name, or instance ID is required, so different worlds and videos can be processed concurrently.

@@ -29,6 +29,8 @@ https://danmaku.paulkoishi.com/player/?url=
 - 网易云音乐单曲解析。
 - 网易云音乐歌单解析；歌单需要在 URL 后附加 `&p=数字`，表示播放歌单里的第几首，例如 `&p=2` 表示第 2 首。
 
+如果你自行部署了本项目的 `server/` 后端，把上面的域名替换成自己的域名，也可以获得同样的解析能力。
+
 ## 项目结构
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
