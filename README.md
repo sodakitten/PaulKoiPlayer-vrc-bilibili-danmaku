@@ -8,6 +8,14 @@
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
+## 使用前需要安装
+
+如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，当前 v1.0.0 还需要：
+
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：必须先安装到 Unity 项目中，本组件会挂载到 YamaPlayer 上。
+- TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
+- Docker：只在你要自行部署 `server/` 后端时需要；只使用公开解析服务时不需要。
+
 ## 项目结构
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
@@ -37,9 +45,10 @@
 ## 环境要求
 
 - Unity 与当前 VRChat Worlds SDK 兼容的版本
-- VRChat Worlds SDK（包含 UdonSharp）
-- TextMeshPro
-- YamaPlayer（当前 v1.0.0 适配器所需）
+- VRChat Worlds SDK（VCC World 项目通常已经包含）
+- UdonSharp（当前 VRChat Worlds SDK 集成版本即可）
+- TextMeshPro Essentials
+- YamaPlayer（当前 v1.0.0 必需）
 - 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
 默认解析服务前缀：

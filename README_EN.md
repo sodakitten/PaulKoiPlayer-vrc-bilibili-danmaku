@@ -8,6 +8,14 @@ The current stable release is **v1.0.0**. It is currently integrated and tested 
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
+## Required before use
+
+If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, v1.0.0 currently requires:
+
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): must be installed in the Unity project first. This component is attached to a YamaPlayer instance.
+- TextMeshPro: TMP Essentials must be imported in the Unity project.
+- Docker: only required when self-hosting the `server/` backend. It is not required when using an existing public parser service.
+
 ## Repository layout
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
@@ -37,9 +45,10 @@ Unified release page: [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibil
 ## Requirements
 
 - A Unity version supported by the current VRChat Worlds SDK
-- VRChat Worlds SDK, including UdonSharp
-- TextMeshPro
-- YamaPlayer, for the current v1.0.0 adapter
+- VRChat Worlds SDK, usually already included by a VCC World project
+- UdonSharp, using the version integrated with the current VRChat Worlds SDK
+- TextMeshPro Essentials
+- YamaPlayer, required by the current v1.0.0 adapter
 - A parser service that returns danmaku in `#YBDM/1` text format
 
 Default parser prefix:

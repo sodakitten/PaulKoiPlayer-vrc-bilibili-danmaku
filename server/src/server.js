@@ -1,5 +1,7 @@
 import http from "node:http";
 import { createDecipheriv, createHmac } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { URL } from "node:url";
 
 const PORT = intEnv("PORT", 3000);
@@ -17,6 +19,8 @@ const NETEASE_DEFAULT_LEVEL = normalizeNeteaseLevel(process.env.NETEASE_LEVEL ||
 const NETEASE_PLAYLIST_CACHE_TTL_MS = intEnv("NETEASE_PLAYLIST_CACHE_TTL_SECONDS", 1800) * 1000;
 const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 1000;
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
+const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
+const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
 
 const viewCache = new Map();
 const videoUrlCache = new Map();
@@ -40,6 +44,9 @@ const stats = {
   healthRequests: 0,
   playerRequests: 0,
   playerRedirects: 0,
+  neteaseRedirects: 0,
+  neteaseSongRedirects: 0,
+  neteasePlaylistRedirects: 0,
   playerDanmakuRequests: 0,
   apiDanmakuRequests: 0,
   resolveRequests: 0,
@@ -47,6 +54,18 @@ const stats = {
   errors: 0,
   emittedDanmakuRows: 0
 };
+let statsDirty = false;
+
+loadPersistedStats();
+setInterval(savePersistedStatsIfDirty, STATS_SAVE_INTERVAL_MS).unref();
+process.once("SIGTERM", () => {
+  savePersistedStats();
+  process.exit(0);
+});
+process.once("SIGINT", () => {
+  savePersistedStats();
+  process.exit(0);
+});
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -60,6 +79,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     stats.totalRequests++;
+    markStatsDirty();
 
     if (requestUrl.pathname === "/") {
       sendHtml(res, 200, renderDashboard(), noStoreHeaders());
@@ -136,6 +156,9 @@ async function handlePlayer(req, res, requestUrl) {
         level
       });
       stats.playerRedirects++;
+      stats.neteaseRedirects++;
+      if (neteaseInput.type === "playlist") stats.neteasePlaylistRedirects++;
+      if (neteaseInput.type === "song") stats.neteaseSongRedirects++;
       res.writeHead(302, {
         "Location": resolved.audioUrl,
         ...noStoreHeaders()
@@ -249,6 +272,78 @@ async function handleApiDanmaku(res, requestUrl) {
   const tsv = await getDanmakuTsv(input);
   stats.emittedDanmakuRows += getDanmakuCount(tsv);
   sendText(res, 200, tsv, danmakuCacheHeaders());
+}
+
+function loadPersistedStats() {
+  try {
+    if (!existsSync(STATS_FILE)) return;
+    const payload = JSON.parse(readFileSync(STATS_FILE, "utf8").replace(/^\uFEFF/, ""));
+    mergeNumericFields(stats, payload.stats);
+    mergeNumericFields(cacheStats.view, payload.cacheStats?.view);
+    mergeNumericFields(cacheStats.video, payload.cacheStats?.video);
+    mergeNumericFields(cacheStats.danmaku, payload.cacheStats?.danmaku);
+    if (Number.isFinite(Number(payload.cacheStats?.inflightHits))) {
+      cacheStats.inflightHits = Number(payload.cacheStats.inflightHits);
+    }
+    stats.startedAt = Date.now();
+  } catch (error) {
+    console.warn("[stats] failed to load persisted stats:", error.message || error);
+  }
+}
+
+function mergeNumericFields(target, source) {
+  if (!source || typeof source !== "object") return;
+  for (const key of Object.keys(target)) {
+    if (key === "startedAt") continue;
+    const value = Number(source[key]);
+    if (Number.isFinite(value) && value >= 0) target[key] = value;
+  }
+}
+
+function markStatsDirty() {
+  statsDirty = true;
+}
+
+function savePersistedStatsIfDirty() {
+  if (!statsDirty) return;
+  savePersistedStats();
+}
+
+function savePersistedStats() {
+  try {
+    mkdirSync(dirname(STATS_FILE), { recursive: true });
+    const payload = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      stats: {
+        totalRequests: stats.totalRequests,
+        healthRequests: stats.healthRequests,
+        playerRequests: stats.playerRequests,
+        playerRedirects: stats.playerRedirects,
+        neteaseRedirects: stats.neteaseRedirects,
+        neteaseSongRedirects: stats.neteaseSongRedirects,
+        neteasePlaylistRedirects: stats.neteasePlaylistRedirects,
+        playerDanmakuRequests: stats.playerDanmakuRequests,
+        apiDanmakuRequests: stats.apiDanmakuRequests,
+        resolveRequests: stats.resolveRequests,
+        legacyRejected: stats.legacyRejected,
+        errors: stats.errors,
+        emittedDanmakuRows: stats.emittedDanmakuRows
+      },
+      cacheStats: {
+        view: { hits: cacheStats.view.hits, misses: cacheStats.view.misses },
+        video: { hits: cacheStats.video.hits, misses: cacheStats.video.misses },
+        danmaku: { hits: cacheStats.danmaku.hits, misses: cacheStats.danmaku.misses },
+        inflightHits: cacheStats.inflightHits
+      }
+    };
+    const tmpFile = `${STATS_FILE}.tmp`;
+    writeFileSync(tmpFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    renameSync(tmpFile, STATS_FILE);
+    statsDirty = false;
+  } catch (error) {
+    console.warn("[stats] failed to save persisted stats:", error.message || error);
+  }
 }
 
 async function parseNeteaseInput(rawValue, forcedPage = 0) {
@@ -1040,6 +1135,9 @@ function buildCacheStats() {
     },
     requests: {
       playerRedirects: stats.playerRedirects,
+      neteaseRedirects: stats.neteaseRedirects,
+      neteaseSongRedirects: stats.neteaseSongRedirects,
+      neteasePlaylistRedirects: stats.neteasePlaylistRedirects,
       playerDanmakuRequests: stats.playerDanmakuRequests,
       apiDanmakuRequests: stats.apiDanmakuRequests,
       resolveRequests: stats.resolveRequests,
@@ -1065,6 +1163,7 @@ function buildCacheStats() {
 
 function renderDashboard() {
   const uptimeSeconds = Math.floor((Date.now() - stats.startedAt) / 1000);
+  const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects);
   const cards = [...danmakuCache.entries()].map(([key, entry]) => {
     const text = entry.value || "";
     return `
@@ -1099,7 +1198,7 @@ function renderDashboard() {
     .subtle { margin:10px 0 0; color:var(--muted); font-size:15px; }
     .badge { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:0 12px; border:1px solid #b9ddd5; border-radius:8px; background:var(--soft); color:#0a604e; font-weight:700; white-space:nowrap; }
     .badge:before { content:""; width:8px; height:8px; border-radius:999px; background:var(--green); }
-    .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:24px 0; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin:24px 0; }
     .stat,.panel,.cache-card { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:var(--shadow); }
     .stat { min-height:118px; padding:18px; }
     .stat span { display:block; color:var(--muted); font-size:14px; }
@@ -1110,6 +1209,8 @@ function renderDashboard() {
     dt { color:var(--muted); font-size:13px; }
     dd { margin:4px 0 0; overflow-wrap:anywhere; font-size:15px; font-weight:650; }
     code { display:block; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:8px; background:#f2f5f7; color:#20313d; font-family:"Cascadia Mono",Consolas,monospace; font-size:13px; white-space:nowrap; }
+    a { color:var(--green); font-weight:700; text-decoration:none; }
+    a:hover { text-decoration:underline; }
     .cache-list { display:grid; gap:14px; }
     .cache-card { padding:18px; background:#fbfcfd; }
     .empty { padding:28px; border:1px dashed #b8c4cc; border-radius:8px; color:var(--muted); background:#fbfcfd; text-align:center; }
@@ -1122,15 +1223,15 @@ function renderDashboard() {
       <div>
         <p class="eyebrow">VRChat &#24377;&#24149;&#20195;&#29702;</p>
         <h1>&#33258;&#26377; B &#31449;&#35299;&#26512;&#26381;&#21153;</h1>
-        <p class="subtle">&#24050;&#21435;&#25481; biliplayer/91player &#20381;&#36182;&#12290;/player &#35270;&#39057;&#35831;&#27714;&#36820;&#22238; B &#31449; MP4 &#30452;&#38142;&#65292;&#24377;&#24149;&#35831;&#27714;&#36820;&#22238; #YBDM/1&#12290;</p>
       </div>
       <div class="badge">&#26381;&#21153;&#27491;&#24120;</div>
     </header>
     <section class="stats">
-      <div class="stat"><span>&#35270;&#39057;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatNumber(stats.playerRedirects)}</strong><small>/player 302 durl</small></div>
-      <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
-      <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
-      <div class="stat"><span>&#24050;&#21457;&#23556;&#24377;&#24149;</span><strong>${formatNumber(stats.emittedDanmakuRows)}</strong><small>&#32047;&#35745;&#36820;&#22238;&#34892;&#25968;</small></div>
+      <div class="stat"><span>B &#31449;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatCompactNumber(biliRedirects)}</strong><small>/player 302 durl</small></div>
+      <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
+      <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
+      <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
+      <div class="stat"><span>&#24050;&#21457;&#23556;&#24377;&#24149;</span><strong>${formatCompactNumber(stats.emittedDanmakuRows)}</strong><small>&#32047;&#35745;&#36820;&#22238;&#34892;&#25968;</small></div>
     </section>
     <section class="panel">
       <h2>&#36816;&#34892;&#20449;&#24687;</h2>
@@ -1139,9 +1240,14 @@ function renderDashboard() {
         <code>&#21551;&#21160;&#26102;&#38388;&#65306;${escapeHtml(formatDateTime(stats.startedAt))}</code>
         <code>view/video/danmaku cache: ${viewCache.size}/${videoUrlCache.size}/${danmakuCache.size}</code>
         <code>inflight: ${inflight.size}</code>
+        <code>NetEase song/playlist: ${formatNumber(stats.neteaseSongRedirects)}/${formatNumber(stats.neteasePlaylistRedirects)}</code>
         <code>/api/resolve: ${stats.resolveRequests}</code>
         <code>legacy rejected: ${stats.legacyRejected}</code>
       </div>
+    </section>
+    <section class="panel">
+      <h2>&#32593;&#26131;&#20113;&#38899;&#20048;&#35299;&#26512;</h2>
+      <p class="subtle">&#24863;&#35874; <a href="https://music.znnu.com/" target="_blank" rel="noopener noreferrer">music.znnu.com</a> &#25552;&#20379;&#31532;&#19977;&#26041;&#35299;&#26512;&#26381;&#21153;&#12290;</p>
     </section>
     <section class="panel">
       <h2>&#24377;&#24149;&#32531;&#23384;</h2>
@@ -1356,6 +1462,31 @@ function escapeHtml(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
+}
+
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  if (Math.abs(number) >= 100000000) {
+    const yi = number / 100000000;
+    return `${formatCompactDecimal(yi)}&#20159;`;
+  }
+  if (Math.abs(number) >= 1000000) {
+    const wan = number / 10000;
+    return `${formatCompactDecimal(wan)}&#19975;`;
+  }
+  if (Math.abs(number) >= 1000) {
+    const thousand = number / 1000;
+    return `${formatCompactDecimal(thousand)}K`;
+  }
+  return formatNumber(number);
+}
+
+function formatCompactDecimal(value) {
+  const rounded = Math.abs(value) >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 1
+  }).format(rounded);
 }
 
 function formatDateTime(value) {

@@ -9,6 +9,7 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY src ./src
+RUN mkdir -p /app/data && chown -R node:node /app/data
 
 USER node
 
