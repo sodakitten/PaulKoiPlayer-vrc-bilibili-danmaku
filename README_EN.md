@@ -8,6 +8,11 @@ The current stable release is **v5.0.0**. It is currently integrated and tested 
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
+## Repository layout
+
+- `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
+- [`server/`](server/README_EN.md): the Dockerized media resolver and danmaku proxy.
+
 ## Features
 
 - Requests danmaku for the URL currently loaded by the player

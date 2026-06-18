@@ -1,0 +1,17 @@
+services:
+  yama-bili-danmaku:
+    build:
+      context: .
+    image: yama-bili-danmaku-proxy:latest
+    container_name: yama-bili-danmaku
+    restart: unless-stopped
+    ports:
+      - "7858:3000"
+    environment:
+      PORT: "3000"
+      VIEW_CACHE_TTL_SECONDS: "1800"
+      VIDEO_URL_CACHE_TTL_SECONDS: "600"
+      DANMAKU_CACHE_TTL_SECONDS: "21600"
+      # Optional. Uncomment when anonymous Bilibili danmaku is incomplete.
+      # BILI_COOKIE: "SESSDATA=...; bili_jct=..."
+      # BILI_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"

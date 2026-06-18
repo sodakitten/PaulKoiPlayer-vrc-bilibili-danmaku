@@ -8,6 +8,11 @@
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
+## 项目结构
+
+- `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
+- [`server/`](server/README.md)：视频解析与弹幕代理服务，提供 Docker 部署。
+
 ## 功能
 
 - 根据播放器当前 URL 自动请求对应弹幕
