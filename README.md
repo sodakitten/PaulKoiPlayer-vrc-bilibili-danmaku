@@ -6,8 +6,6 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-项目主名称为 **PaulKoiPlayer**；当前代码仓库为 [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku)，组件名为 `vrc-bilibili-danmaku`。
-
 [vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) 是 **PaulKoiPlayer** 的 VRChat 哔哩哔哩弹幕组件，为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
 当前稳定版为 **v1.0.0**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。

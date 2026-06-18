@@ -6,8 +6,6 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-The primary project name is **PaulKoiPlayer**; the current code repository is [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku), and the component name is `vrc-bilibili-danmaku`.
-
 [vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) is the VRChat Bilibili danmaku component for **PaulKoiPlayer**. It provides Bilibili danmaku loading, synchronization, and rendering for video players in VRChat worlds.
 
 The current stable release is **v1.0.0**. It is currently integrated and tested with **YamaPlayer**. Future work will continue under PaulKoiPlayer while adding support for more VRChat video players.
