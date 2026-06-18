@@ -23,6 +23,8 @@ For normal video requests, the server returns a `302` redirect to a playable med
 - In-flight request deduplication for concurrent requests to the same resource
 - No database dependency
 
+> **NetEase resolver dependency:** NetEase song, playlist, and short-link resolution is provided by the third-party service [https://music.znnu.com/](https://music.znnu.com/). This project only calls its API and is not affiliated with or maintained by that service. Availability, rate limits, regional restrictions, and API changes are controlled by the third party.
+
 ## Quick deployment
 
 Node.js does not need to be installed on the host. Node.js 20 is included in the Docker image.
@@ -166,4 +168,4 @@ Node.js 20 or newer is required.
 
 ## Disclaimer
 
-This service does not store or host Bilibili or NetEase media. It only parses URLs, requests metadata, converts danmaku, and generates redirects. Changes to third-party APIs, CDNs, regional restrictions, or access policies may affect results. Follow the applicable service terms and local laws.
+This service does not store or host Bilibili or NetEase media. It only parses URLs, requests metadata, converts danmaku, and generates redirects. NetEase resolution depends on [music.znnu.com](https://music.znnu.com/); changes to third-party APIs, CDNs, regional restrictions, or access policies may affect results. Follow the applicable service terms and local laws.
