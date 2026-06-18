@@ -18,7 +18,8 @@
 
 统一版本页：[v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
 
-- `vrc-bilibili-danmaku-unity-v1.0.0.zip`：Unity / UdonSharp 组件。
+- `vrc-bilibili-danmaku_1.0.0.unitypackage`：推荐使用的 Unity 导入包。
+- `vrc-bilibili-danmaku-unity-v1.0.0.zip`：Unity / UdonSharp 组件源码目录。
 - `vrc-bilibili-danmaku-server-v1.0.0.zip`：Docker 服务端。
 
 ## 功能
@@ -49,7 +50,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. 从 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 Unity 组件。
+1. 从 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 `vrc-bilibili-danmaku_1.0.0.unitypackage` 并导入 Unity 项目。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`

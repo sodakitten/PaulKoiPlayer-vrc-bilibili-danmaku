@@ -18,7 +18,8 @@ The current stable release is **v1.0.0**. It is currently integrated and tested 
 
 Unified release page: [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
 
-- `vrc-bilibili-danmaku-unity-v1.0.0.zip`: Unity/UdonSharp component.
+- `vrc-bilibili-danmaku_1.0.0.unitypackage`: recommended Unity import package.
+- `vrc-bilibili-danmaku-unity-v1.0.0.zip`: Unity/UdonSharp source folder.
 - `vrc-bilibili-danmaku-server-v1.0.0.zip`: Docker server.
 
 ## Features
@@ -49,7 +50,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Download the Unity component from the [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0).
+1. Download `vrc-bilibili-danmaku_1.0.0.unitypackage` from the [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) and import it into your Unity project.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
