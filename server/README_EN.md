@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md) | [Project home](../README_EN.md)
 
-This Docker resolver service accompanies [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) / **PaulKoiPlayer**. A VRChat world only needs one endpoint:
+This Docker resolver service accompanies [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) / **PaulKoiPlayer**. A VRChat world only needs one endpoint:
 
 ```text
 https://your-domain.example/player/?url=<video or music URL>
@@ -12,7 +12,7 @@ After self-hosting this backend, set `Bili URL Prefix Helper > Url Prefix` in th
 
 Current public service status page: [https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/). If this page cannot be reached, the current public service is unavailable.
 
-The server and Unity component share version **v1.0.0** and are downloadable from the same [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0).
+The server and Unity component share version **v1.0.0** and are downloadable from the same [v1.0.0 release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0).
 
 For normal video requests, the server returns a `302` redirect to a playable media URL. For `VRCStringDownloader` requests, the same endpoint returns `#YBDM/1` text. No room name, world name, or instance ID is required, so different worlds and videos can be processed concurrently.
 

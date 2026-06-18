@@ -6,9 +6,9 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-The primary project name is **PaulKoiPlayer**; the current repository and component name is [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku).
+The primary project name is **PaulKoiPlayer**; the current code repository is [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku), and the component name is `vrc-bilibili-danmaku`.
 
-[vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) is the VRChat Bilibili danmaku component repository for **PaulKoiPlayer**. It provides Bilibili danmaku loading, synchronization, and rendering for video players in VRChat worlds.
+[vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) is the VRChat Bilibili danmaku component for **PaulKoiPlayer**. It provides Bilibili danmaku loading, synchronization, and rendering for video players in VRChat worlds.
 
 The current stable release is **v1.0.0**. It is currently integrated and tested with **YamaPlayer**. Future work will continue under PaulKoiPlayer while adding support for more VRChat video players.
 
@@ -47,7 +47,7 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 ## Downloads
 
-Unified release page: [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
+Unified release page: [v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0)
 
 - `vrc-bilibili-danmaku_1.0.0.unitypackage`: recommended Unity import package.
 - `vrc-bilibili-danmaku-unity-v1.0.0.zip`: Unity/UdonSharp source folder.
@@ -82,7 +82,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Download `vrc-bilibili-danmaku_1.0.0.unitypackage` from the [v1.0.0 release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) and import it into your Unity project.
+1. Download `vrc-bilibili-danmaku_1.0.0.unitypackage` from the [v1.0.0 release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0) and import it into your Unity project.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`

@@ -6,9 +6,9 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
-项目主名称为 **PaulKoiPlayer**；当前仓库与组件名为 [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku)。
+项目主名称为 **PaulKoiPlayer**；当前代码仓库为 [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku)，组件名为 `vrc-bilibili-danmaku`。
 
-[vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) 是 **PaulKoiPlayer** 的 VRChat 哔哩哔哩弹幕组件仓库，为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
+[vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) 是 **PaulKoiPlayer** 的 VRChat 哔哩哔哩弹幕组件，为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
 当前稳定版为 **v1.0.0**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。
 
@@ -47,7 +47,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 下载
 
-统一版本页：[v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0)
+统一版本页：[v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0)
 
 - `vrc-bilibili-danmaku_1.0.0.unitypackage`：推荐使用的 Unity 导入包。
 - `vrc-bilibili-danmaku-unity-v1.0.0.zip`：Unity / UdonSharp 组件源码目录。
@@ -82,7 +82,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. 从 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 `vrc-bilibili-danmaku_1.0.0.unitypackage` 并导入 Unity 项目。
+1. 从 [v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 `vrc-bilibili-danmaku_1.0.0.unitypackage` 并导入 Unity 项目。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README_EN.md) | [返回项目主页](../README.md)
 
-这是 [vrc-bilibili-danmaku](https://github.com/sodakitten/vrc-bilibili-danmaku) / **PaulKoiPlayer** 配套的 Docker 解析服务。VRChat 世界只需要使用一个入口：
+这是 [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) / **PaulKoiPlayer** 配套的 Docker 解析服务。VRChat 世界只需要使用一个入口：
 
 ```text
 https://你的域名/player/?url=<视频或音乐链接>
@@ -12,7 +12,7 @@ https://你的域名/player/?url=<视频或音乐链接>
 
 当前公共服务状态页：[https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/)。如果该页面无法访问，说明当前公共服务不可用。
 
-服务端与 Unity 组件统一使用 **v1.0.0**，可在同一个 [v1.0.0 Release](https://github.com/sodakitten/vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载。
+服务端与 Unity 组件统一使用 **v1.0.0**，可在同一个 [v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载。
 
 对于普通视频请求，服务返回可播放媒体直链的 `302` 跳转；对于 `VRCStringDownloader` 弹幕请求，同一地址返回 `#YBDM/1` 文本。该设计不依赖 `room`、世界名称或实例 ID，可以同时处理不同世界和不同视频。
 
