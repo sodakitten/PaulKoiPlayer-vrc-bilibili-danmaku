@@ -12,6 +12,7 @@ The current stable release is **v1.0.0**. It is currently integrated and tested 
 
 - `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
 - [`server/`](server/README_EN.md): the Dockerized media resolver and danmaku proxy.
+- [`docs/DEVELOPMENT_NOTES.md`](docs/DEVELOPMENT_NOTES.md): development history, failed approaches, and fixes (Chinese).
 
 ## Downloads
 
@@ -157,3 +158,7 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 ## Current release
 
 v1.0.0 is the first unified release containing both the Unity component and its matching Docker server. The component includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.
+
+## Roadmap
+
+Future releases will continue to add in-world interaction, including a player-facing danmaku toggle, density/quantity controls, full-screen and half-screen display areas, and a compact VRChat-friendly settings panel. These additions will be built around the current stable loading, synchronization, and rendering path. Until they are released, v1.0.0 remains configured by the world author in the Unity Inspector.

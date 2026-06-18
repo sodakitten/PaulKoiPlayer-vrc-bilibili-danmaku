@@ -12,6 +12,7 @@
 
 - `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
 - [`server/`](server/README.md)：视频解析与弹幕代理服务，提供 Docker 部署。
+- [`docs/DEVELOPMENT_NOTES.md`](docs/DEVELOPMENT_NOTES.md)：组件试错、错误修复与演进记录。
 
 ## 下载
 
@@ -157,3 +158,7 @@ UdonSharp > Compile All UdonSharp Programs
 ## 当前版本说明
 
 v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docker 服务端。组件包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
+
+## 后续计划
+
+后续版本会继续补充世界内互动功能，计划方向包括玩家可操作的弹幕开关、弹幕密度/数量控制、全屏与半屏显示区域，以及适合 VRChat 的简洁设置界面。实现时会优先保护当前稳定的加载、同步和渲染路径；在这些功能正式发布前，v1.0.0 仍需要由世界作者在 Unity Inspector 中完成配置。
