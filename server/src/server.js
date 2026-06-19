@@ -1381,6 +1381,8 @@ function renderDashboard() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="15">
+  <link rel="icon" type="image/png" href="${PAULKOI_LOGO_PATH}">
+  <link rel="apple-touch-icon" href="${PAULKOI_LOGO_PATH}">
   <title>PaulKoiPlayer &#35299;&#26512;&#26381;&#21153;</title>
   <style>
     :root { --bg:#f6f7f9; --panel:#fff; --soft:#eef6f4; --text:#172026; --muted:#65717b; --line:#dce3e8; --green:#0f8f72; --shadow:0 16px 40px rgba(25,38,49,.10); }
@@ -1403,6 +1405,9 @@ function renderDashboard() {
     .stat span { display:block; color:var(--muted); font-size:14px; }
     .stat strong { display:block; margin-top:10px; font-size:32px; line-height:1; }
     .stat small { display:block; margin-top:12px; color:var(--muted); }
+    .stat-primary { grid-column:1 / -1; min-height:150px; padding:24px 28px; }
+    .stat-primary span { font-size:16px; }
+    .stat-primary strong { font-size:54px; line-height:.95; letter-spacing:0; }
     .panel { margin-top:16px; padding:22px; }
     .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 18px; margin:0; }
     dt { color:var(--muted); font-size:13px; }
@@ -1429,12 +1434,12 @@ function renderDashboard() {
       <div class="badge">&#26381;&#21153;&#27491;&#24120;</div>
     </header>
     <section class="stats">
+      <div class="stat stat-primary"><span>&#24050;&#21457;&#23556;&#24377;&#24149;</span><strong>${formatNumber(stats.emittedDanmakuRows)}</strong><small>&#32047;&#35745;&#36820;&#22238;&#34892;&#25968;</small></div>
       <div class="stat"><span>B &#31449;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatCompactNumber(biliRedirects)}</strong><small>/player 302 durl</small></div>
       <div class="stat"><span>B &#31449;&#30452;&#25773;&#36339;&#36716;</span><strong>${formatCompactNumber(stats.liveRedirects)}</strong><small>/player 302 m3u8</small></div>
       <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
       <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
       <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
-      <div class="stat"><span>&#24050;&#21457;&#23556;&#24377;&#24149;</span><strong>${formatCompactNumber(stats.emittedDanmakuRows)}</strong><small>&#32047;&#35745;&#36820;&#22238;&#34892;&#25968;</small></div>
     </section>
     <section class="panel">
       <h2>&#36816;&#34892;&#20449;&#24687;</h2>
