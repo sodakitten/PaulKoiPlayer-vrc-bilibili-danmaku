@@ -48,6 +48,8 @@ The dashboard counters are saved in `./data/stats.json`.
 Optional environment variables:
 
 - `PORT`: default `3000`
+- `TZ`: default `Asia/Shanghai`
+- `DISPLAY_TIME_ZONE`: default `Asia/Shanghai`
 - `VIEW_CACHE_TTL_SECONDS`: default `1800`
 - `VIDEO_URL_CACHE_TTL_SECONDS`: default `600`
 - `DANMAKU_CACHE_TTL_SECONDS`: default `21600`

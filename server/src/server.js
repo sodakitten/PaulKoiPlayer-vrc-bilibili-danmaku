@@ -21,6 +21,7 @@ const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
+const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || process.env.TZ || "Asia/Shanghai";
 const PAULKOI_LOGO_PATH = "/assets/paulkoi_logo_transparent.png";
 const PAULKOI_LOGO_PNG = readFileSync(new URL("./assets/paulkoi_logo_transparent.png", import.meta.url));
 
@@ -1708,6 +1709,7 @@ function formatCompactDecimal(value) {
 
 function formatDateTime(value) {
   return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: DISPLAY_TIME_ZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

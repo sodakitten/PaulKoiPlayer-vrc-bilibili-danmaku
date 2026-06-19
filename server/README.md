@@ -116,6 +116,8 @@ Or URL-encode the inner URL so `#` becomes `%23`.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port inside the container. |
+| `TZ` | `Asia/Shanghai` | Container timezone used by runtime libraries. |
+| `DISPLAY_TIME_ZONE` | `Asia/Shanghai` | Dashboard display timezone for dates such as service start time. |
 | `VIEW_CACHE_TTL_SECONDS` | `1800` | Bilibili video view cache TTL. |
 | `VIDEO_URL_CACHE_TTL_SECONDS` | `600` | Bilibili direct video URL cache TTL. |
 | `DANMAKU_CACHE_TTL_SECONDS` | `21600` | Bilibili danmaku cache TTL. |
