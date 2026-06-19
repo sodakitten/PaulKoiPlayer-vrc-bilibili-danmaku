@@ -1,5 +1,7 @@
 # Docker Deployment
 
+Version: `1.0.0`
+
 Build and run:
 
 ```bash
@@ -22,6 +24,7 @@ Playback examples:
 
 ```text
 https://your-domain.example/player/?url=BV1PV7m6DE51
+https://your-domain.example/player/?url=https://live.bilibili.com/1741183250
 https://your-domain.example/player/?url=music.163.com/song?id=346075
 https://your-domain.example/player/?url=music.163.com/playlist?id=487424073
 ```

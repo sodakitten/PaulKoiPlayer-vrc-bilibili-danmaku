@@ -2,7 +2,7 @@ services:
   yama-bili-danmaku:
     build:
       context: .
-    image: yama-bili-danmaku-proxy:latest
+    image: yama-bili-danmaku-proxy:1.0.0
     container_name: yama-bili-danmaku
     restart: unless-stopped
     ports:

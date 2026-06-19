@@ -1,184 +1,216 @@
-# PaulKoiPlayer 弹幕解析服务
+# Yama Bili Danmaku Proxy
 
-[简体中文](README.md) | [English](README_EN.md) | [返回项目主页](../README.md)
+Version: `1.0.0`
 
-这是 [PaulKoiPlayer-vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) / **PaulKoiPlayer** 配套的 Docker 解析服务。VRChat 世界只需要使用一个入口：
+A small Dockerized Node.js proxy for VRChat/YamaPlayer style playback URLs.
 
-```text
-https://你的域名/player/?url=<视频或音乐链接>
-```
+It accepts a `/player/?url=...` request, resolves supported Bilibili and NetEase Cloud Music links, and returns a direct `302` redirect to a playable media URL. For Bilibili danmaku requests, it returns a `#YBDM/1` TSV payload.
 
-自行部署这个后端后，将 Unity 组件里的 `Bili URL Prefix Helper > Url Prefix` 改成自己的域名，例如 `https://你的域名/player/?url=`，即可获得与公共服务相同的解析能力。
+## Features
 
-当前公共服务状态页：[https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/)。如果该页面无法访问，说明当前公共服务不可用。
+- Bilibili video URL, BV ID, and av ID parsing.
+- Bilibili MP4 direct-link redirect for video players.
+- Bilibili live room direct-link redirect to playable HLS `.m3u8` streams.
+- Bilibili danmaku export as `#YBDM/1`.
+- NetEase Cloud Music song and playlist parsing through `music.znnu.com`.
+- NetEase playlist page selection with `p` or `page`.
+- NetEase short-link support through `163cn.tv`.
+- In-memory cache for Bilibili view/playurl/danmaku data and NetEase playlist/song URLs.
+- Persistent dashboard counters under `/app/data/stats.json`, including Bilibili video redirects, Bilibili live redirects, NetEase redirects, danmaku requests, cache hits, and emitted danmaku rows.
+- No database required.
 
-服务端与 Unity 组件统一使用 **v1.0.0**，可在同一个 [v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载。
-
-对于普通视频请求，服务返回可播放媒体直链的 `302` 跳转；对于 `VRCStringDownloader` 弹幕请求，同一地址返回 `#YBDM/1` 文本。该设计不依赖 `room`、世界名称或实例 ID，可以同时处理不同世界和不同视频。
-
-## 支持内容
-
-- 哔哩哔哩视频链接、BV 号和 av 号
-- 哔哩哔哩 MP4 直链解析
-- XML 与 protobuf 分段弹幕，输出 `#YBDM/1`
-- 哔哩哔哩直播解析；直播暂不返回弹幕
-- 网易云音乐单曲、歌单和 `163cn.tv` 短链接
-- 网易云歌单使用 `p` 或 `page` 选择曲目
-- 视频信息、直链、弹幕和歌单的内存缓存
-- 并发请求合并：相同资源首次加载期间只执行一次上游请求
-- 无数据库依赖
-
-> **网易云解析依赖说明：** 网易云音乐的单曲、歌单和短链接解析由第三方服务 [https://music.znnu.com/](https://music.znnu.com/) 提供。本项目仅调用其接口，不是该服务的官方项目。该功能的可用性、限流、地区限制和接口变化由第三方服务决定。
-
-## 快速部署
-
-服务器不需要预装 Node.js，Node.js 20 已包含在 Docker 镜像中。
+## Quick Start
 
 ```bash
 docker compose up -d --build
 ```
 
-默认端口映射：
-
-```text
-宿主机 7858 -> 容器 3000
-```
-
-检查运行状态：
+Health check:
 
 ```bash
-docker compose ps
 curl http://127.0.0.1:7858/health
 ```
 
-查看状态面板：
+Open the dashboard:
 
 ```text
 http://127.0.0.1:7858/
 ```
 
-查看缓存统计：
+## URL Examples
+
+Bilibili video:
 
 ```text
-http://127.0.0.1:7858/api/cache/stats
+https://your-domain.example/player/?url=BV1PV7m6DE51
+https://your-domain.example/player/?url=https://www.bilibili.com/video/BV1PV7m6DE51
 ```
 
-更新服务：
-
-```bash
-git pull
-docker compose up -d --build
-```
-
-## 使用方法
-
-### 哔哩哔哩视频
+Bilibili live:
 
 ```text
-https://你的域名/player/?url=BV1PV7m6DE51
-https://你的域名/player/?url=https://www.bilibili.com/video/BV1PV7m6DE51
+https://your-domain.example/player/?url=https://live.bilibili.com/1741183250
 ```
 
-### 哔哩哔哩直播
+Bilibili danmaku:
 
 ```text
-https://你的域名/player/?url=https://live.bilibili.com/123456
+https://your-domain.example/player/?__dm=1&url=BV1PV7m6DE51
+https://your-domain.example/api/danmaku?url=BV1PV7m6DE51
 ```
 
-直播请求只做播放解析，暂不返回直播弹幕。
-
-强制返回弹幕，适合诊断：
+NetEase Cloud Music song:
 
 ```text
-https://你的域名/player/?__dm=1&url=BV1PV7m6DE51
-https://你的域名/api/danmaku?url=BV1PV7m6DE51
+https://your-domain.example/player/?url=music.163.com/song?id=346075
 ```
 
-正常播放请求返回 `302 Location`。弹幕请求返回：
+NetEase Cloud Music playlist:
+
+```text
+https://your-domain.example/player/?url=music.163.com/playlist?id=487424073
+https://your-domain.example/player/?url=music.163.com/f/playlist?id=487424073
+https://your-domain.example/player/?url=y.music.163.com/m/playlist?id=487424073
+```
+
+NetEase short link:
+
+```text
+https://your-domain.example/player/?url=163cn.tv/xxxx
+```
+
+Select a playlist track:
+
+```text
+https://your-domain.example/player/?url=music.163.com/playlist?id=487424073&p=2
+```
+
+The default playlist track is `p=1`.
+
+## NetEase Hash URLs
+
+NetEase web pages often use hash routes, for example:
+
+```text
+https://music.163.com/#/song?id=346075
+https://music.163.com/#/playlist?id=487424073
+```
+
+The `#...` part is not sent to servers by browsers or HTTP clients. Do not pass raw hash URLs directly as the `url` parameter:
+
+```text
+https://your-domain.example/player/?url=https://music.163.com/#/song?id=346075
+```
+
+Use the non-hash form instead:
+
+```text
+https://your-domain.example/player/?url=music.163.com/song?id=346075
+https://your-domain.example/player/?url=music.163.com/playlist?id=487424073
+```
+
+Or URL-encode the inner URL so `#` becomes `%23`.
+
+## Environment Variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port inside the container. |
+| `VIEW_CACHE_TTL_SECONDS` | `1800` | Bilibili video view cache TTL. |
+| `VIDEO_URL_CACHE_TTL_SECONDS` | `600` | Bilibili direct video URL cache TTL. |
+| `DANMAKU_CACHE_TTL_SECONDS` | `21600` | Bilibili danmaku cache TTL. |
+| `NETEASE_PLAYLIST_CACHE_TTL_SECONDS` | `1800` | NetEase playlist metadata cache TTL. |
+| `NETEASE_URL_CACHE_TTL_SECONDS` | `600` | NetEase song direct URL cache TTL. |
+| `NETEASE_LEVEL` | `standard` | Default NetEase quality level. Supported values include `standard`, `exhigh`, `lossless`, `hires`, `sky`, `jyeffect`, `jymaster`. |
+| `ZNNU_BASE_URL` | `https://music.znnu.com` | NetEase parsing backend. |
+| `ZNNU_FETCH_TIMEOUT_SECONDS` | `30` | Timeout for ZNNU API requests. |
+| `STATS_FILE` | `/app/data/stats.json` | Persistent dashboard counter file. |
+| `STATS_SAVE_INTERVAL_SECONDS` | `30` | How often changed counters are flushed to disk. |
+| `BILI_COOKIE` / `BILIBILI_COOKIE` | empty | Optional Bilibili cookie string. Useful when anonymous access returns incomplete data. |
+| `BILI_USER_AGENT` | browser-like UA | Optional User-Agent override for Bilibili and ZNNU requests. |
+
+## Persistent Counters
+
+The dashboard counters are saved to `STATS_FILE`. The included Compose file mounts:
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+This keeps cumulative counters across container rebuilds and restarts. Runtime data in `data/` is ignored by Git.
+
+## External Services Used
+
+This project does not host Bilibili or NetEase media itself. It resolves metadata and redirects clients to third-party media URLs.
+
+The service depends on these external services:
+
+| Service | Used For | Notes |
+| --- | --- | --- |
+| `api.bilibili.com` | Bilibili video metadata, MP4 play URLs, XML danmaku, protobuf danmaku segments. | Endpoints include `/x/web-interface/view`, `/x/player/playurl`, `/x/v1/dm/list.so`, `/x/v2/dm/web/seg.so`. |
+| `api.live.bilibili.com` | Bilibili live room metadata and live stream URLs. | Endpoints include `/room/v1/Room/room_init` and `/xlive/web-room/v2/index/getRoomPlayInfo`. |
+| `www.bilibili.com` | Bilibili referer header. | Sent when requesting Bilibili APIs. |
+| `b23.tv` | Bilibili short-link expansion. | Expanded with manual redirect handling. |
+| Bilibili CDN domains, such as `*.bilivideo.com` | Final Bilibili video and live playback URLs. | `/player/` redirects clients to these URLs. |
+| `music.znnu.com` | NetEase song, playlist, and short-link parsing. | Uses `/api/key`, `/api/ip`, `/api/redirect`, `/api/playlist`, and `/api/song`. |
+| `music.163.com` and `y.music.163.com` | Accepted input URL domains and NetEase referer context. | Raw hash routes must be converted or URL-encoded before being nested in `/player/?url=`. |
+| `163cn.tv` | Accepted NetEase short-link input. | Resolved through `music.znnu.com` before parsing. |
+| NetEase CDN domains, such as `*.music.126.net` | Final NetEase playback URLs. | `/player/` redirects clients to these URLs. |
+| `docker.m.daocloud.io/library/node:20-alpine` | Docker base image. | Change the `FROM` line in `Dockerfile` if you prefer Docker Hub or another registry mirror. |
+
+Because these are third-party services, availability, response format, rate limits, geo restrictions, and media playback behavior may change outside this project's control.
+
+## API Notes
+
+`/player/?url=...` has Bilibili priority. If an input can be parsed as Bilibili, it follows the Bilibili path first. NetEase parsing is only attempted when no Bilibili BV/av ID is found.
+
+Normal playback requests return `302 Location: ...`.
+
+Bilibili live room URLs always return a `302` live stream redirect before danmaku detection, because live playback does not use the Bilibili VOD danmaku TSV path.
+
+Danmaku requests are detected by `__dm=1`, text-like request headers, or VRC string downloader style user agents, and return plain text:
 
 ```text
 #YBDM/1
 #columns=progressMs	mode	color	fontSize	pool	content
 ```
 
-服务会通过 `__dm=1`、文本类型请求头以及 VRChat 字符串下载器的 User-Agent 识别弹幕请求。
+Legacy room endpoints such as `/api/current` and `/api/set` return `410 Gone`.
 
-### 网易云音乐
-
-```text
-https://你的域名/player/?url=music.163.com/song?id=346075
-https://你的域名/player/?url=music.163.com/playlist?id=487424073
-https://你的域名/player/?url=music.163.com/playlist?id=487424073&p=2
-https://你的域名/player/?url=163cn.tv/xxxx
-```
-
-歌单默认播放 `p=1`。如需播放歌单里的其他曲目，请在外层 URL 后附加 `&p=数字`，例如 `&p=2` 表示第 2 首。网易云网页常见的 `#/song` 与 `#/playlist` 是浏览器片段，不能直接发送到服务器，请改用无 `#` 的地址，或对内层 URL 完整编码。
-
-## 接口
-
-| 路径 | 作用 |
-| --- | --- |
-| `GET /player/?url=...` | 统一播放与弹幕入口 |
-| `GET /player/?__dm=1&url=...` | 强制返回弹幕 |
-| `GET /api/danmaku?url=...` | 直接获取弹幕 |
-| `GET /api/resolve?url=...` | 获取解析诊断信息 |
-| `GET /api/cache/stats` | 查看缓存与命中统计 |
-| `GET /health` | Docker 健康检查 |
-
-旧接口 `/api/current` 与 `/api/set` 已彻底移除，并返回 `410 Gone`。不要再使用 `room=main`。
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-| --- | ---: | --- |
-| `PORT` | `3000` | 容器内 HTTP 端口 |
-| `VIEW_CACHE_TTL_SECONDS` | `1800` | B 站视频信息缓存时间 |
-| `VIDEO_URL_CACHE_TTL_SECONDS` | `600` | B 站媒体直链缓存时间 |
-| `DANMAKU_CACHE_TTL_SECONDS` | `21600` | B 站弹幕缓存时间 |
-| `NETEASE_PLAYLIST_CACHE_TTL_SECONDS` | `1800` | 网易云歌单缓存时间 |
-| `NETEASE_URL_CACHE_TTL_SECONDS` | `600` | 网易云媒体直链缓存时间 |
-| `NETEASE_LEVEL` | `standard` | 网易云默认音质 |
-| `ZNNU_BASE_URL` | `https://music.znnu.com` | 网易云解析后端 |
-| `ZNNU_FETCH_TIMEOUT_SECONDS` | `30` | 网易云接口超时秒数 |
-| `BILI_COOKIE` / `BILIBILI_COOKIE` | 空 | 可选 B 站 Cookie |
-| `BILI_USER_AGENT` | 浏览器 UA | 可选上游 User-Agent |
-
-不要把真实 Cookie 直接写入 `docker-compose.yml` 后提交。建议使用服务器本地 `.env` 文件，并限制文件权限。
-
-## Nginx 反向代理
+## Reverse Proxy Example
 
 ```nginx
 server {
-    server_name danmaku.example.com;
+  server_name danmaku.example.com;
 
-    location / {
-        proxy_pass http://127.0.0.1:7858;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+  location / {
+    proxy_pass http://127.0.0.1:7858;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
 }
 ```
 
-随后为域名启用 HTTPS。使用 Cloudflare 时，可以将 DNS 指向服务器，并确保源站证书与 Cloudflare SSL 模式配置正确。
+Then enable HTTPS with your preferred certificate tool.
 
-## 缓存与并发
+## Development
 
-缓存以视频/分 P/音质等解析参数为键，不使用全局 `room` 状态。不同世界播放不同视频时互不覆盖；相同资源并发请求会共享正在进行的上游任务，完成后从内存缓存读取。
-
-缓存位于内存中，容器重启后会清空，但不影响接口正确性，只会让首次请求重新访问上游服务。
-
-## 本地开发
-
-如需脱离 Docker 运行：
+Run a syntax check:
 
 ```bash
 npm run check
+```
+
+Run locally:
+
+```bash
 npm start
 ```
 
-需要 Node.js 20 或更高版本。
+The app requires Node.js 20 or newer.
 
-## 注意事项
+## Disclaimer
 
-本服务不存储或托管哔哩哔哩、网易云音乐的媒体文件，只进行 URL 解析、元数据请求、弹幕格式转换与重定向。网易云解析依赖 [music.znnu.com](https://music.znnu.com/)；第三方接口、CDN、地区限制和访问策略发生变化时，解析结果也可能受到影响。请遵守相关服务条款和当地法律。
+Use this project responsibly and follow the terms and policies of the services you access through it. This project only performs URL parsing, metadata lookup, danmaku formatting, and redirect generation.
