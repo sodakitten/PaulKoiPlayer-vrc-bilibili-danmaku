@@ -21,6 +21,8 @@ const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
+const PAULKOI_LOGO_PATH = "/assets/paulkoi_logo_transparent.png";
+const PAULKOI_LOGO_PNG = readFileSync(new URL("./assets/paulkoi_logo_transparent.png", import.meta.url));
 
 const viewCache = new Map();
 const videoUrlCache = new Map();
@@ -44,6 +46,7 @@ const stats = {
   healthRequests: 0,
   playerRequests: 0,
   playerRedirects: 0,
+  liveRedirects: 0,
   neteaseRedirects: 0,
   neteaseSongRedirects: 0,
   neteasePlaylistRedirects: 0,
@@ -89,6 +92,13 @@ const server = http.createServer(async (req, res) => {
     if (requestUrl.pathname === "/health") {
       stats.healthRequests++;
       sendText(res, 200, "ok\n");
+      return;
+    }
+
+    if (requestUrl.pathname === PAULKOI_LOGO_PATH) {
+      sendBuffer(res, 200, PAULKOI_LOGO_PNG, "image/png", {
+        "Cache-Control": "public, max-age=86400"
+      });
       return;
     }
 
@@ -141,6 +151,26 @@ async function handlePlayer(req, res, requestUrl) {
 
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = await parseInputUrl(source, forcedPage);
+  const liveInput = await parseLiveInput(source);
+  if (liveInput) {
+    const resolved = await resolveLiveUrl(liveInput);
+    logPlayerRequest(req, requestUrl, {
+      mode: "live-redirect",
+      provider: "bilibili-live",
+      roomId: liveInput.roomId,
+      realRoomId: resolved.realRoomId,
+      quality: resolved.actualQuality
+    });
+    stats.playerRedirects++;
+    stats.liveRedirects++;
+    res.writeHead(302, {
+      "Location": resolved.videoUrl,
+      ...noStoreHeaders()
+    });
+    res.end();
+    return;
+  }
+
   if (!input.bvid && !input.aid) {
     const neteaseInput = await parseNeteaseInput(source, forcedPage);
     if (neteaseInput) {
@@ -320,6 +350,7 @@ function savePersistedStats() {
         healthRequests: stats.healthRequests,
         playerRequests: stats.playerRequests,
         playerRedirects: stats.playerRedirects,
+        liveRedirects: stats.liveRedirects,
         neteaseRedirects: stats.neteaseRedirects,
         neteaseSongRedirects: stats.neteaseSongRedirects,
         neteasePlaylistRedirects: stats.neteasePlaylistRedirects,
@@ -665,6 +696,42 @@ async function parseInputUrl(rawValue, forcedPage = 0) {
   };
 }
 
+async function parseLiveInput(rawValue) {
+  let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = await expandB23Url(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+
+  const parsed = tryParseUrl(normalizedUrl);
+  if (!parsed || parsed.hostname.toLowerCase() !== "live.bilibili.com") return null;
+
+  const roomId = parseLiveRoomId(parsed);
+  if (!roomId) return null;
+
+  return {
+    type: "live",
+    roomId,
+    normalizedUrl
+  };
+}
+
+function parseLiveRoomId(url) {
+  const fromQuery = normalizeAid(url.searchParams.get("room_id") || url.searchParams.get("roomid") || "");
+  if (fromQuery) return String(fromQuery);
+
+  const segments = url.pathname
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const segment of segments) {
+    const match = segment.match(/^(\d+)$/);
+    if (match) return match[1];
+  }
+
+  return "";
+}
+
 async function expandB23Url(value) {
   const parsed = tryParseUrl(value);
   if (!parsed || parsed.hostname.toLowerCase() !== "b23.tv") return value;
@@ -802,6 +869,134 @@ async function fetchMp4Durl({ aid, bvid, cid }) {
     lastMessage = "no durl in response";
   }
   throw new Error(`no mp4 durl for this video: ${lastMessage}`);
+}
+
+async function resolveLiveUrl(input) {
+  const key = `live:${input.roomId}`;
+  const cached = videoUrlCache.get(key);
+  const result = await getCached(videoUrlCache, key, VIDEO_URL_CACHE_TTL_MS, cacheStats.video, async () => {
+    const room = await getLiveRoomInfo(input.roomId);
+    if (!room || !room.room_id) {
+      throw new Error("live room info not found");
+    }
+
+    if (room.live_status !== 1) {
+      throw new Error("live room is not streaming");
+    }
+
+    const playInfo = await getLivePlayInfo(room.room_id, 10000);
+    const direct = normalizeLivePlayResult(playInfo);
+    if (!direct.directUrl) {
+      throw new Error("live stream url not found");
+    }
+
+    return {
+      videoUrl: direct.directUrl,
+      backupUrls: direct.backupUrls,
+      actualQuality: direct.actualQuality,
+      roomId: input.roomId,
+      realRoomId: room.room_id,
+      title: room.title || ""
+    };
+  });
+
+  return {
+    ...result.value,
+    cacheHit: Boolean(cached && Date.now() - cached.time < VIDEO_URL_CACHE_TTL_MS)
+  };
+}
+
+async function getLiveRoomInfo(roomId) {
+  const params = new URLSearchParams({ id: String(roomId) });
+  const payload = await fetchJson(`https://api.live.bilibili.com/room/v1/Room/room_init?${params}`);
+  if (payload.code !== 0 || !payload.data) {
+    throw new Error(payload.message || payload.msg || "get live room info failed");
+  }
+  return payload.data;
+}
+
+async function getLivePlayInfo(realRoomId, quality) {
+  const params = new URLSearchParams({
+    room_id: String(realRoomId),
+    protocol: "0,1",
+    format: "1",
+    codec: "0,1",
+    qn: String(quality),
+    platform: "h5",
+    ptype: "8"
+  });
+
+  const payload = await fetchJson(`https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?${params}`);
+  if (payload.code !== 0 || !payload.data) {
+    throw new Error(payload.message || payload.msg || "get live stream failed");
+  }
+  return payload.data;
+}
+
+function normalizeLivePlayResult(data) {
+  const streams = data?.playurl_info?.playurl?.stream;
+  if (!Array.isArray(streams)) {
+    return { directUrl: "", actualQuality: 0, backupUrls: [] };
+  }
+
+  const candidates = [];
+
+  for (const stream of streams) {
+    const protocolName = stream?.protocol_name || "";
+    const formats = Array.isArray(stream?.format) ? stream.format : [];
+
+    for (const format of formats) {
+      const formatName = format?.format_name || "";
+      const codecs = Array.isArray(format?.codec) ? format.codec : [];
+
+      for (const codec of codecs) {
+        const baseUrl = codec?.base_url || codec?.baseUrl || "";
+        const urlInfos = Array.isArray(codec?.url_info) ? codec.url_info : [];
+        const codecName = codec?.codec_name || "";
+        const quality = readPositiveInt(codec?.current_qn, 0);
+
+        for (const urlInfo of urlInfos) {
+          const fullUrl = combineLiveUrl(urlInfo?.host || "", baseUrl, urlInfo?.extra || "");
+          if (!fullUrl) continue;
+
+          candidates.push({
+            url: fullUrl,
+            quality,
+            score: liveCandidateScore(protocolName, formatName, codecName, quality)
+          });
+        }
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const selected = candidates[0];
+
+  return {
+    directUrl: selected ? selected.url : "",
+    actualQuality: selected ? selected.quality : 0,
+    backupUrls: candidates.slice(1, 6).map((item) => item.url)
+  };
+}
+
+function combineLiveUrl(host, baseUrl, extra) {
+  if (!host || !baseUrl) return "";
+  const normalizedHost = host.endsWith("/") ? host.slice(0, -1) : host;
+  const normalizedBase = baseUrl.startsWith("/") ? baseUrl : "/" + baseUrl;
+  return normalizedHost + normalizedBase + (extra || "");
+}
+
+function liveCandidateScore(protocolName, formatName, codecName, quality) {
+  let score = readPositiveInt(quality, 0);
+
+  if (protocolName === "http_hls") score += 100000;
+  if (formatName === "fmp4") score += 20000;
+  if (formatName === "ts") score += 10000;
+  if (formatName === "flv") score += 1000;
+  if (codecName === "avc") score += 500;
+  if (codecName === "hevc") score += 100;
+
+  return score;
 }
 
 async function getDanmakuTsv(input) {
@@ -1135,6 +1330,7 @@ function buildCacheStats() {
     },
     requests: {
       playerRedirects: stats.playerRedirects,
+      liveRedirects: stats.liveRedirects,
       neteaseRedirects: stats.neteaseRedirects,
       neteaseSongRedirects: stats.neteaseSongRedirects,
       neteasePlaylistRedirects: stats.neteasePlaylistRedirects,
@@ -1163,7 +1359,7 @@ function buildCacheStats() {
 
 function renderDashboard() {
   const uptimeSeconds = Math.floor((Date.now() - stats.startedAt) / 1000);
-  const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects);
+  const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects - stats.liveRedirects);
   const cards = [...danmakuCache.entries()].map(([key, entry]) => {
     const text = entry.value || "";
     return `
@@ -1185,13 +1381,16 @@ function renderDashboard() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="15">
-  <title>&#24377;&#24149;&#20195;&#29702;&#29366;&#24577;</title>
+  <title>PaulKoiPlayer &#35299;&#26512;&#26381;&#21153;</title>
   <style>
     :root { --bg:#f6f7f9; --panel:#fff; --soft:#eef6f4; --text:#172026; --muted:#65717b; --line:#dce3e8; --green:#0f8f72; --shadow:0 16px 40px rgba(25,38,49,.10); }
     * { box-sizing:border-box; }
     body { margin:0; min-height:100vh; font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
     .shell { max-width:1180px; margin:0 auto; padding:32px 20px 48px; }
     header { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; padding-bottom:24px; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:16px; min-width:0; }
+    .brand-logo { width:72px; height:72px; object-fit:contain; flex:0 0 auto; filter:drop-shadow(0 10px 18px rgba(0,138,210,.18)); }
+    .brand-copy { min-width:0; }
     h1 { margin:0; font-size:34px; line-height:1.15; }
     h2 { margin:0 0 16px; font-size:20px; }
     .eyebrow { margin:0 0 8px; color:var(--green); font-size:13px; font-weight:700; }
@@ -1214,20 +1413,24 @@ function renderDashboard() {
     .cache-list { display:grid; gap:14px; }
     .cache-card { padding:18px; background:#fbfcfd; }
     .empty { padding:28px; border:1px dashed #b8c4cc; border-radius:8px; color:var(--muted); background:#fbfcfd; text-align:center; }
-    @media (max-width:880px) { header { align-items:flex-start; flex-direction:column; } .stats,.grid { grid-template-columns:1fr; } h1 { font-size:28px; } }
+    @media (max-width:880px) { header { align-items:flex-start; flex-direction:column; } .brand-logo { width:60px; height:60px; } .stats,.grid { grid-template-columns:1fr; } h1 { font-size:28px; } }
   </style>
 </head>
 <body>
   <main class="shell">
     <header>
-      <div>
-        <p class="eyebrow">VRChat &#24377;&#24149;&#20195;&#29702;</p>
-        <h1>&#33258;&#26377; B &#31449;&#35299;&#26512;&#26381;&#21153;</h1>
+      <div class="brand">
+        <img class="brand-logo" src="${PAULKOI_LOGO_PATH}" alt="PaulKoiPlayer">
+        <div class="brand-copy">
+          <p class="eyebrow">VRChat &#24377;&#24149;&#20195;&#29702;</p>
+          <h1>PaulKoiPlayer&#35299;&#26512;&#26381;&#21153;</h1>
+        </div>
       </div>
       <div class="badge">&#26381;&#21153;&#27491;&#24120;</div>
     </header>
     <section class="stats">
       <div class="stat"><span>B &#31449;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatCompactNumber(biliRedirects)}</strong><small>/player 302 durl</small></div>
+      <div class="stat"><span>B &#31449;&#30452;&#25773;&#36339;&#36716;</span><strong>${formatCompactNumber(stats.liveRedirects)}</strong><small>/player 302 m3u8</small></div>
       <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
       <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
       <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
@@ -1294,6 +1497,15 @@ function sendHtml(res, status, body, extraHeaders = {}) {
 function sendJson(res, status, body, extraHeaders = {}) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...extraHeaders });
   res.end(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+function sendBuffer(res, status, body, contentType, extraHeaders = {}) {
+  res.writeHead(status, {
+    "Content-Type": contentType,
+    "Content-Length": body.length,
+    ...extraHeaders
+  });
+  res.end(body);
 }
 
 function logPlayerRequest(req, requestUrl, extra) {
