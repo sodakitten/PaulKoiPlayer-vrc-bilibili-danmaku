@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js"
+    "check": "node --check src/server.js && node --check src/worker.js",
+    "worker:dev": "npx wrangler dev --local --port 8787",
+    "worker:deploy": "npx wrangler deploy"
   },
   "engines": {
     "node": ">=20"

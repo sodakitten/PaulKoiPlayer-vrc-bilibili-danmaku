@@ -1,0 +1,14 @@
+name = "paulkoi-danmaku-worker"
+main = "src/worker.js"
+compatibility_date = "2025-12-15"
+
+[vars]
+VIEW_CACHE_TTL_SECONDS = "1800"
+VIDEO_URL_CACHE_TTL_SECONDS = "600"
+DANMAKU_CACHE_TTL_SECONDS = "21600"
+NETEASE_PLAYLIST_CACHE_TTL_SECONDS = "1800"
+NETEASE_URL_CACHE_TTL_SECONDS = "600"
+NETEASE_LEVEL = "standard"
+ZNNU_BASE_URL = "https://music.znnu.com"
+ZNNU_FETCH_TIMEOUT_SECONDS = "30"
+DISPLAY_TIME_ZONE = "Asia/Shanghai"

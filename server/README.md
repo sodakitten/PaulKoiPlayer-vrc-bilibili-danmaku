@@ -37,6 +37,38 @@ Open the dashboard:
 http://127.0.0.1:7858/
 ```
 
+## Cloudflare Workers Experimental
+
+This repository also includes a lightweight Cloudflare Workers entry at `src/worker.js`.
+
+Run a syntax check:
+
+```bash
+npm run check
+```
+
+Start a local Wrangler dev server:
+
+```bash
+npm run worker:dev
+```
+
+Deploy with Wrangler after logging in to Cloudflare:
+
+```bash
+npm run worker:deploy
+```
+
+The Worker version keeps the core endpoints:
+
+- `GET /health`
+- `GET /player/?url=...`
+- `GET /api/danmaku?url=...`
+- `GET /api/resolve?url=...`
+- `GET /api/cache/stats`
+
+It uses the Cloudflare Cache API with an in-isolate memory fallback. Persistent dashboard counters and the full Docker dashboard are intentionally not included in the Worker version. The Docker service remains the stable deployment path.
+
 ## URL Examples
 
 Bilibili video:

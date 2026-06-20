@@ -20,6 +20,15 @@ Dashboard:
 http://127.0.0.1:7858/
 ```
 
+Cloudflare Workers experimental entry:
+
+```bash
+npm run worker:dev
+npm run worker:deploy
+```
+
+Workers use `src/worker.js` and `wrangler.toml`. This mode keeps the core resolver APIs, but does not include the full Docker dashboard or persistent counters.
+
 Playback examples:
 
 ```text
