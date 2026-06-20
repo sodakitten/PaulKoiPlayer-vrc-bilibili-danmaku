@@ -139,7 +139,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Yama Bili Danmaku proxy listening on http://localhost:${PORT}`);
+  console.log(`PaulKoiPlayer danmaku server listening on http://localhost:${PORT}`);
 });
 
 async function handlePlayer(req, res, requestUrl) {

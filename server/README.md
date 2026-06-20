@@ -1,8 +1,8 @@
-# Yama Bili Danmaku Proxy
+# PaulKoiPlayer Danmaku Server
 
 Version: `1.0.0`
 
-A small Dockerized Node.js proxy for VRChat/YamaPlayer style playback URLs.
+A small Dockerized Node.js proxy for VRChat video player style playback URLs.
 
 It accepts a `/player/?url=...` request, resolves supported Bilibili and NetEase Cloud Music links, and returns a direct `302` redirect to a playable media URL. For Bilibili danmaku requests, it returns a `#YBDM/1` TSV payload.
 

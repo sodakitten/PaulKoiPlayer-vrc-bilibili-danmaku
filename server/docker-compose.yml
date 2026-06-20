@@ -1,9 +1,9 @@
 services:
-  yama-bili-danmaku:
+  paulkoi-danmaku-server:
     build:
       context: .
-    image: yama-bili-danmaku-proxy:1.0.0
-    container_name: yama-bili-danmaku
+    image: paulkoi-danmaku-server:1.0.0
+    container_name: paulkoi-danmaku-server
     restart: unless-stopped
     ports:
       - "7858:3000"

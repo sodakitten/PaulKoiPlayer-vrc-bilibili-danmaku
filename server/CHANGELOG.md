@@ -2,7 +2,7 @@
 
 ## 1.0.0 - 2026-06-19
 
-- Added unified `/player/?url=...` playback and danmaku handling for VRChat/YamaPlayer.
+- Added unified `/player/?url=...` playback and danmaku handling for VRChat video players.
 - Added Bilibili video direct-link redirects and `#YBDM/1` danmaku output.
 - Added Bilibili live room direct-link redirects to playable HLS `.m3u8` streams.
 - Added NetEase Cloud Music song, playlist, and short-link redirects through `music.znnu.com`.
