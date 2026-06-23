@@ -30,7 +30,7 @@ namespace YamaBiliDanmakuV3
     [SerializeField, Range(4f, 16f)] private float _scrollDuration = 8f;
     [SerializeField, Range(1f, 8f)] private float _staticDuration = 4f;
     [SerializeField, Range(-5000, 5000)] private int _timeOffsetMs = 0;
-    [SerializeField, Range(64, 4096)] private int _maxDanmakuLines = 1600;
+    [SerializeField, Range(64, 4096)] private int _maxDanmakuLines = 4096;
 
     [Header("Display Area")]
     [Tooltip("0 = full screen, 1 = upper half, 2 = upper quarter anti-blocking area.")]
@@ -103,7 +103,6 @@ namespace YamaBiliDanmakuV3
 
       if (!_danmakuEnabled)
       {
-        HideAllTexts();
         return;
       }
 
@@ -392,7 +391,7 @@ namespace YamaBiliDanmakuV3
       bool isBottom = mode == 4;
       bool isTop = mode == 5;
       bool isStatic = isBottom || isTop;
-      text.gameObject.SetActive(false);
+      if (text.gameObject.activeSelf) text.gameObject.SetActive(false);
       text.text = _content[index];
       text.color = ToColor(_color[index]);
 
@@ -610,11 +609,21 @@ namespace YamaBiliDanmakuV3
     private void HideAllTexts()
     {
       if (!Utilities.IsValid(_textPool)) return;
-      for (int i = 0; i < _textPool.Length; i++)
+      int cursor = 0;
+      while (cursor < _activePoolCount && cursor < _activePoolIndexes.Length)
       {
+        int i = _activePoolIndexes[cursor];
+        if (i < 0 || i >= _poolActive.Length || i >= _textPool.Length)
+        {
+          cursor++;
+          continue;
+        }
+
         _poolActive[i] = false;
         if (Utilities.IsValid(_textPool[i])) _textPool[i].gameObject.SetActive(false);
+        cursor++;
       }
+
       _activePoolCount = 0;
     }
 

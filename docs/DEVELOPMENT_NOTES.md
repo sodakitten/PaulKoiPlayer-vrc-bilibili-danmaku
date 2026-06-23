@@ -9,7 +9,7 @@
 - 编辑器生成器：`Editor/YamaBiliDanmakuRigBuilder3.cs`
 - 镜子可读 TMP Shader：`Shaders/YamaBiliDanmakuTMPMirrorReadable.shader`
 - Docker 服务：`server/src/server.js`
-- 公开版本：`1.01`
+- 公开版本：`1.02`
 
 后续功能应从这个基线继续，不应从早期试验包或旧版 Package 目录回拷代码。
 
@@ -308,7 +308,34 @@ UdonSharpEditorUtility.GetBackingUdonBehaviour(...)
 - 用户确认前不提交、不 push、不创建 GitHub release。
 - 可用 beta 基线需要明确记录；本轮 `beta9.3` 是交互可用基线，`beta9.4` 在其上修正显示区域切换不清屏。
 
-## 12. 服务端依赖与缓存
+## 12. v1.02 高密度弹幕与轻量性能优化
+
+v1.02 从 `beta10.1` 晋升。它没有改下载、解析、播放同步和 TMP 视觉主链路，主要解决高密度弹幕视频只显示开头一段的问题，并补了几处低风险运行时优化。
+
+### 高密度弹幕上限
+
+测试视频 `BV1xx411c7Xg` 的服务端 `#YBDM/1` 返回约 3600 条弹幕，但 v1.01 Unity 端默认 `_maxDanmakuLines = 1600`。这个视频前 1600 条弹幕集中在开头十几秒内，因此 Unity 端看起来像“后面没有弹幕”。
+
+v1.02 将默认上限提高到 4096：
+
+- Runtime 默认值：`_maxDanmakuLines = 4096`。
+- 编辑器生成器 `WireModule()` 也会把现有模块写回 4096。
+- 对象池仍保持原有规模，不增加同时显示的 TMP 文本数量。
+
+后续不要把“加载上限”与“同时显示数量”混为一谈。提高 `_maxDanmakuLines` 主要增加加载后保存的弹幕数组容量，不等于屏幕上同时渲染更多 TextMeshPro 对象。
+
+### 低风险性能小修
+
+v1.02 还保留了 `beta10.0` 的几处小优化：
+
+- 弹幕关闭后，`Update()` 不再每帧重复调用 `HideAllTexts()`。
+- `HideAllTexts()` 只处理 `_activePoolIndexes` 中当前 active 的弹幕，不再每次遍历完整对象池。
+- 新弹幕发射前，只有文本对象仍 active 时才 `SetActive(false)`，减少无意义 UI active 状态切换。
+- 新建模块不再给主弹幕 Canvas 添加多余 `GraphicRaycaster`；重新执行 `Wire Selected Bili Danmaku Module` 会移除旧模块上的主 Canvas raycaster，保留独立控制面板 Canvas 的 raycaster。
+
+这些修改的目标是降低无效 CPU/UI 工作量，不改变 TMP 材质、透明度、描边、Underlay、镜子可读 shader 或按钮交互结构。
+
+## 13. 服务端依赖与缓存
 
 服务端使用 Node.js 20 Docker 镜像，宿主机默认映射 `7858 -> 3000`。B 站信息、媒体直链和弹幕分别缓存；相同键的并发请求通过 inflight 合并，避免缓存未建立时重复请求上游。
 
@@ -340,6 +367,8 @@ UdonSharpEditorUtility.GetBackingUdonBehaviour(...)
 - 不把 UnityEvent 直接绑定到 UdonSharp C# proxy；需要绑定 backing `UdonBehaviour`。
 - 不用 Toggle 表达 `Full/Half/1/4` 这种三态循环状态。
 - 不在切换显示区域时调用 `HideAllTexts()` 清空已有弹幕。
+- 不在弹幕关闭状态下每帧重复遍历并隐藏全部对象池。
+- 不把 `_maxDanmakuLines` 降回 1600，除非重新验证高密度弹幕视频不会被截断。
 - 不使用全局 `room=main` 保存当前视频。
 - 不通过组件顺序自动猜测 URL 输入框。
 - 不在一次修改中同时替换下载、解析、同步和渲染四条路径。

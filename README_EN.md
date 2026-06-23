@@ -10,13 +10,13 @@
 
 Example world: [https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-The current stable release is **1.01**. It is currently integrated and tested with **YamaPlayer**. Future work will continue under PaulKoiPlayer while adding support for more VRChat video players.
+The current stable release is **1.02**. It is currently integrated and tested with **YamaPlayer**. Future work will continue under PaulKoiPlayer while adding support for more VRChat video players.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
 ## Required before use
 
-If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, 1.01 currently requires:
+If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, 1.02 currently requires:
 
 - [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): must be installed in the Unity project first. This component is attached to a YamaPlayer instance.
 - TextMeshPro: TMP Essentials must be imported in the Unity project.
@@ -49,10 +49,10 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 Current release package:
 
-- `PaulKoiPlayer-vrc-bilibili-danmaku-1.01.unitypackage`: Unity import package, recommended for normal installation.
-- `1.01.zip`: Unity/UdonSharp component source package, useful for manual inspection or file copying.
+- `1.02.unitypackage`: Unity import package, recommended for normal installation.
+- `1.02.zip`: Unity/UdonSharp component source package, useful for manual inspection or file copying.
 
-The server did not change in 1.01. Continue using the v1.0.0 `server/` backend.
+The server did not change in 1.02. Continue using the v1.0.0 `server/` backend.
 
 ## Features
 
@@ -72,7 +72,7 @@ The server did not change in 1.01. Continue using the v1.0.0 `server/` backend.
 - VRChat Worlds SDK, usually already included by a VCC World project
 - UdonSharp, using the version integrated with the current VRChat Worlds SDK
 - TextMeshPro Essentials
-- YamaPlayer, required by the current 1.01 adapter
+- YamaPlayer, required by the current 1.02 adapter
 - A parser service that returns danmaku in `#YBDM/1` text format
 
 Default parser prefix:
@@ -83,7 +83,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Download `PaulKoiPlayer-vrc-bilibili-danmaku-1.01.unitypackage` and import it into Unity, or download `1.01.zip` and extract it manually.
+1. Download `1.02.unitypackage` and import it into Unity, or download `1.02.zip` and extract it manually.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -133,7 +133,7 @@ The same endpoint returns video resolution data to the video player and danmaku 
 
 ## Common settings
 
-> **These settings are configured in the Unity Editor only.** 1.01 generates only a lightweight player-facing control panel for display area switching and danmaku on/off. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
+> **These settings are configured in the Unity Editor only.** 1.02 generates only a lightweight player-facing control panel for display area switching and danmaku on/off. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
 
 | Setting | Default | Description |
 | --- | ---: | --- |
@@ -141,7 +141,7 @@ The same endpoint returns video resolution data to the video player and danmaku 
 | `Scroll Duration` | 8 | Seconds for scrolling text to cross the screen |
 | `Static Duration` | 4 | Display time for top and bottom comments |
 | `Time Offset Ms` | 0 | Danmaku timing correction |
-| `Max Danmaku Lines` | 1600 | Maximum comments loaded per request |
+| `Max Danmaku Lines` | 4096 | Maximum comments loaded per request |
 | `Font Scale` | 1.1 | Text display scale |
 | `Text Alpha` | 0.72 | Text opacity |
 | `Outline Width` | 0.11 | Black TMP outline width |
@@ -171,7 +171,7 @@ Changing the Inspector values without running the Apply command does not update 
 
 ## In-world danmaku controls
 
-1.01 generates a lightweight `Danmaku Controls Canvas` under `Bili Danmaku Module`. It contains two player-facing buttons:
+1.02 generates a lightweight `Danmaku Controls Canvas` under `Bili Danmaku Module`. It contains two player-facing buttons:
 
 - `Danmaku: Full / Half / 1/4`: cycles between full-screen, upper-half, and upper-quarter danmaku areas.
 - `Danmaku: On / Off`: toggles danmaku visibility.
@@ -212,6 +212,14 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 
 ## Current release
 
+Compared with 1.01, 1.02 updates the Unity component:
+
+- Raises the default `Max Danmaku Lines` from 1600 to 4096, fixing dense danmaku videos that previously displayed only the opening section.
+- Stops repeatedly hiding all text every frame while danmaku is disabled.
+- Makes `HideAllTexts()` process only currently active danmaku entries instead of the full pool.
+- Avoids unnecessary UI active-state changes when emitting a new danmaku entry.
+- New modules no longer add an extra `GraphicRaycaster` to the main danmaku Canvas; running `Wire Selected Bili Danmaku Module` removes that extra main Canvas raycaster from older modules.
+
 Compared with v1.0.0, 1.01 updates the Unity component:
 
 - Adds a mirror-readable TextMeshPro danmaku shader. It follows YamaPlayer's `_MirrorFlip` + `_VRChatMirrorMode` mirror inversion pattern, pre-flips danmaku text during VRChat mirror rendering, and preserves the existing TMP outline, underlay, and light semibold styling.
@@ -220,14 +228,14 @@ Compared with v1.0.0, 1.01 updates the Unity component:
 - UI event binding now targets the backing `UdonBehaviour.SendCustomEvent`, matching YamaPlayer's event binding pattern.
 - Fixes a brief edge flash that could happen when very long danmaku is emitted.
 
-The `server/` backend did not change in 1.01. Continue using the v1.0.0 server.
+The `server/` backend did not change in 1.02. Continue using the v1.0.0 server.
 
 v1.0.0 is the first unified release containing both the Unity component and its matching Docker server. The component includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.
 
 ## Acknowledgements and related links
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/): current public parser service status page. If it cannot be reached, the public service is unavailable.
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player currently integrated and tested by 1.01.
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player currently integrated and tested by 1.02.
 - [music.znnu.com](https://music.znnu.com/): the third-party service used by the server for NetEase Cloud Music resolution.
 - [yionchi](https://github.com/yionchi): author of the related `music.znnu.com` service.
 

@@ -141,7 +141,6 @@ namespace YamaBiliDanmakuV3.Editor
       canvas.sortingOrder = 20;
       CanvasScaler scaler = root.AddComponent<CanvasScaler>();
       scaler.dynamicPixelsPerUnit = 10f;
-      root.AddComponent<GraphicRaycaster>();
 
       RectTransform canvasRect = root.GetComponent<RectTransform>();
       canvasRect.sizeDelta = new Vector2(CanvasWidth, CanvasHeight);
@@ -625,6 +624,7 @@ namespace YamaBiliDanmakuV3.Editor
       TextMeshProUGUI displayAreaButtonLabel;
       Button danmakuToggleButton;
       TextMeshProUGUI danmakuToggleButtonLabel;
+      RemoveRootGraphicRaycaster(selected);
       CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel);
       TextMeshProUGUI[] pool = selected.GetComponentsInChildren<TextMeshProUGUI>(true);
       WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
@@ -807,7 +807,7 @@ namespace YamaBiliDanmakuV3.Editor
       SetBool(serialized, "_editorHeavyOutlineEnabled", true);
       SetFloat(serialized, "_editorOutlineWidth", DefaultOutlineWidth);
       SetFloat(serialized, "_editorOutlineAlpha", DefaultOutlineAlpha);
-      SetInt(serialized, "_maxDanmakuLines", 1600);
+      SetInt(serialized, "_maxDanmakuLines", 4096);
 
       SerializedProperty poolProperty = serialized.FindProperty("_textPool");
       if (poolProperty != null)
@@ -848,6 +848,17 @@ namespace YamaBiliDanmakuV3.Editor
       button.onClick = new Button.ButtonClickedEvent();
       UnityEventTools.AddStringPersistentListener(button.onClick, sendEvent, eventName);
       EditorUtility.SetDirty(button);
+    }
+
+    private static void RemoveRootGraphicRaycaster(GameObject root)
+    {
+      if (root == null) return;
+
+      GraphicRaycaster raycaster = root.GetComponent<GraphicRaycaster>();
+      if (raycaster == null) return;
+
+      Undo.DestroyObjectImmediate(raycaster);
+      EditorUtility.SetDirty(root);
     }
 
     private static bool TryGetSendCustomEventAction(Component component, out UnityAction<string> sendEvent)
