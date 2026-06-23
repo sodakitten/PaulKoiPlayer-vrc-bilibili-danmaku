@@ -18,6 +18,8 @@ namespace YamaBiliDanmakuV3
     [SerializeField] private bool _loadFromCurrentYamaPlayerUrl = true;
     [SerializeField] private VRCUrl _fallbackDanmakuUrl = VRCUrl.Empty;
     [SerializeField] private TextMeshProUGUI _statusText;
+    [SerializeField] private TextMeshProUGUI _displayAreaButtonLabel;
+    [SerializeField] private TextMeshProUGUI _danmakuToggleButtonLabel;
     [SerializeField, Range(0f, 10f)] private float _statusVisibleSeconds = 2f;
 
     [Header("Renderer")]
@@ -29,6 +31,10 @@ namespace YamaBiliDanmakuV3
     [SerializeField, Range(1f, 8f)] private float _staticDuration = 4f;
     [SerializeField, Range(-5000, 5000)] private int _timeOffsetMs = 0;
     [SerializeField, Range(64, 4096)] private int _maxDanmakuLines = 1600;
+
+    [Header("Display Area")]
+    [Tooltip("0 = full screen, 1 = upper half, 2 = upper quarter anti-blocking area.")]
+    [SerializeField, Range(0, 2)] private int _displayAreaMode = 0;
 
     [Header("Appearance")]
     [SerializeField, Range(0.1f, 3f)] private float _fontScale = 1.1f;
@@ -79,6 +85,8 @@ namespace YamaBiliDanmakuV3
       }
 
       InitializePool();
+      UpdateDisplayAreaButtonLabel();
+      UpdateDanmakuToggleButtonLabel();
       SetStatus("idle");
     }
 
@@ -213,10 +221,12 @@ namespace YamaBiliDanmakuV3
       {
         HideAllTexts();
         SetStatus("danmaku off");
+        UpdateDanmakuToggleButtonLabel();
         return;
       }
 
       SetStatus("danmaku on");
+      UpdateDanmakuToggleButtonLabel();
       ClearLaneTimers();
       if (Utilities.IsValid(_controller) && !_controller.Stopped)
       {
@@ -230,6 +240,26 @@ namespace YamaBiliDanmakuV3
     {
       _textAlpha = Mathf.Clamp01(alpha);
       ApplyAlphaToActiveTexts();
+    }
+
+    public void SetFullScreenDanmaku()
+    {
+      SetDisplayAreaMode(0);
+    }
+
+    public void SetHalfScreenDanmaku()
+    {
+      SetDisplayAreaMode(1);
+    }
+
+    public void SetQuarterScreenDanmaku()
+    {
+      SetDisplayAreaMode(2);
+    }
+
+    public void CycleDisplayAreaMode()
+    {
+      SetDisplayAreaMode((_displayAreaMode + 1) % 3);
     }
 
     public override void OnStringLoadSuccess(IVRCStringDownload result)
@@ -362,22 +392,25 @@ namespace YamaBiliDanmakuV3
       bool isBottom = mode == 4;
       bool isTop = mode == 5;
       bool isStatic = isBottom || isTop;
-      int lane = SelectLane(isBottom);
-
+      text.gameObject.SetActive(false);
       text.text = _content[index];
       text.color = ToColor(_color[index]);
-      text.gameObject.SetActive(true);
 
       float visualScale = Mathf.Clamp((_fontSize[index] * _fontScale) / 25f, 0.5f, 2.5f);
       rect.localScale = new Vector3(visualScale, visualScale, 1f);
 
       float rootWidth = Mathf.Max(1f, _laneRoot.rect.width);
       float rootHeight = Mathf.Max(1f, _laneRoot.rect.height);
+      float areaFactor = GetDisplayAreaHeightFactor();
+      float areaHeight = Mathf.Max(_lineHeight, rootHeight * areaFactor);
+      float areaTop = rootHeight * 0.5f;
+      float areaBottom = areaTop - areaHeight;
+      int lane = SelectLane(GetEffectiveLaneCount(areaHeight));
       int contentLength = string.IsNullOrEmpty(_content[index]) ? 1 : _content[index].Length;
-      float textWidth = Mathf.Max(80f, contentLength * 22f * visualScale + 32f);
+      float textWidth = Mathf.Max(120f, contentLength * 36f * visualScale + 96f);
       float y = isBottom
-        ? -rootHeight * 0.5f + _lineHeight * (lane + 0.5f)
-        : rootHeight * 0.5f - _lineHeight * (lane + 0.5f);
+        ? areaBottom + _lineHeight * (lane + 0.5f)
+        : areaTop - _lineHeight * (lane + 0.5f);
 
       _poolActive[poolIndex] = true;
       AddActivePoolIndex(poolIndex);
@@ -389,6 +422,7 @@ namespace YamaBiliDanmakuV3
       _activeMode[poolIndex] = mode;
 
       rect.anchoredPosition = new Vector2(_activeStartX[poolIndex], y);
+      text.gameObject.SetActive(true);
       _laneReadyAt[lane] = Time.time + (isStatic ? _staticDuration * 0.7f : _scrollDuration * 0.35f);
     }
 
@@ -499,9 +533,9 @@ namespace YamaBiliDanmakuV3
       return -1;
     }
 
-    private int SelectLane(bool fromBottom)
+    private int SelectLane(int laneCount)
     {
-      int count = Mathf.Max(1, _laneReadyAt.Length);
+      int count = Mathf.Clamp(laneCount, 1, Mathf.Max(1, _laneReadyAt.Length));
       int best = 0;
       float bestTime = _laneReadyAt[0];
       for (int i = 1; i < count; i++)
@@ -513,6 +547,53 @@ namespace YamaBiliDanmakuV3
         }
       }
       return best;
+    }
+
+    private int GetEffectiveLaneCount(float areaHeight)
+    {
+      int byHeight = Mathf.Max(1, Mathf.FloorToInt(areaHeight / Mathf.Max(1f, _lineHeight)));
+      return Mathf.Clamp(byHeight, 1, Mathf.Max(1, _laneReadyAt.Length));
+    }
+
+    private float GetDisplayAreaHeightFactor()
+    {
+      if (_displayAreaMode == 1) return 0.5f;
+      if (_displayAreaMode == 2) return 0.25f;
+      return 1f;
+    }
+
+    private void SetDisplayAreaMode(int mode)
+    {
+      _displayAreaMode = Mathf.Clamp(mode, 0, 2);
+      ClearLaneTimers();
+      UpdateDisplayAreaButtonLabel();
+      SetStatus(GetDisplayAreaStatusText());
+    }
+
+    private void UpdateDisplayAreaButtonLabel()
+    {
+      if (!Utilities.IsValid(_displayAreaButtonLabel)) return;
+      _displayAreaButtonLabel.text = GetDisplayAreaButtonText();
+    }
+
+    private void UpdateDanmakuToggleButtonLabel()
+    {
+      if (!Utilities.IsValid(_danmakuToggleButtonLabel)) return;
+      _danmakuToggleButtonLabel.text = _danmakuEnabled ? "Danmaku: On" : "Danmaku: Off";
+    }
+
+    private string GetDisplayAreaButtonText()
+    {
+      if (_displayAreaMode == 1) return "Danmaku: Half";
+      if (_displayAreaMode == 2) return "Danmaku: 1/4";
+      return "Danmaku: Full";
+    }
+
+    private string GetDisplayAreaStatusText()
+    {
+      if (_displayAreaMode == 1) return "danmaku half screen";
+      if (_displayAreaMode == 2) return "danmaku quarter screen";
+      return "danmaku full screen";
     }
 
     private void SeekLineIndex(int videoMs)

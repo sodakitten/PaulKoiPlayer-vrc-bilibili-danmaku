@@ -7,8 +7,9 @@
 - Unity 组件：`Runtime/YamaBiliDanmakuModule3.cs`
 - URL 前缀辅助：`Runtime/YamaBiliUrlPrefixHelper3.cs`
 - 编辑器生成器：`Editor/YamaBiliDanmakuRigBuilder3.cs`
+- 镜子可读 TMP Shader：`Shaders/YamaBiliDanmakuTMPMirrorReadable.shader`
 - Docker 服务：`server/src/server.js`
-- 公开版本：`v1.0.0`
+- 公开版本：`1.01`
 
 后续功能应从这个基线继续，不应从早期试验包或旧版 Package 目录回拷代码。
 
@@ -195,35 +196,119 @@ https://danmaku.paulkoishi.com/player/?url=
 - 后续不要增强“自动猜测”；宁可显式配置，也不要静默连错。
 - 玩家仍可手动删除前缀；`Keep Prefix When Empty` 默认关闭。
 
-## 10. 当前互动边界
+## 10. v1.01 世界内互动控制
 
-v1.0.0 没有自动生成世界内互动设置面板。以下内容只能由世界作者在 Unity Inspector 中调整：
+v1.01 在 Unity 组件端新增了一个轻量的世界内控制面板：
+
+```text
+Bili Danmaku Module
+└── Danmaku Controls Canvas
+    ├── BG
+    ├── Display Area Button
+    └── Danmaku Toggle Button
+```
+
+该面板使用 World Space Canvas、`GraphicRaycaster`、`VRC_UiShape` 和 `BoxCollider`。两个控件都使用普通 `Button`，不使用勾选框：
+
+- `Display Area Button`：循环切换 `Danmaku: Full`、`Danmaku: Half`、`Danmaku: 1/4`。
+- `Danmaku Toggle Button`：切换 `Danmaku: On` 与 `Danmaku: Off`。
+
+切换显示区域时，不再清空已经发射的弹幕。旧弹幕继续按发射时的位置和动画走完，后续新弹幕才按新的显示区域分配轨道。这个行为由 `SetDisplayAreaMode` 只更新 `_displayAreaMode`、按钮文字和轨道计时器实现，不调用 `HideAllTexts()`。
+
+以下内容仍只能由世界作者在 Unity Inspector 中调整：
 
 - 字体缩放、透明度、粗体和描边
 - 轨道数、滚动时长、静态停留时长
 - 时间偏移和最大加载条数
 - URL 前缀配置
 
-组件公开了：
+组件仍公开这些 Udon 事件，供自定义世界 UI 或其他脚本调用：
 
 ```text
 ToggleDanmaku
 EnableDanmaku
 DisableDanmaku
+SetFullScreenDanmaku
+SetHalfScreenDanmaku
+SetQuarterScreenDanmaku
+CycleDisplayAreaMode
 ```
 
-但这些只是 Udon 事件。要让玩家在世界内操作，作者仍需自行创建 Button/Toggle 并绑定。
+互动功能必须建立在当前稳定渲染路径上，不能为了增加 UI 再次改写核心下载、解析、同步和渲染流程。
 
-后续互动路线计划包括：
+## 11. v1.01 试错复盘
 
-- 内置或可选的世界内弹幕开关
-- 弹幕密度与同时显示数量控制
-- 全屏、上半屏和下半屏显示区域
-- 适合 VRChat 操作的轻量设置面板
+本轮从 v1.0.0 到 v1.01 的开发中，多次出现“看起来快好了，但实际在 Unity 或 VRChat 里坏掉”的情况。以下问题需要在后续维护中明确避免。
 
-互动功能必须建立在当前稳定渲染路径上，不能为了增加 UI 再次改写核心下载和渲染流程。
+### 镜子可读文字
 
-## 11. 服务端依赖与缓存
+最初尝试通过场景对象或播放控制器侧翻转文字，但这容易影响普通视角，且会碰到 YamaPlayer API 差异。当前稳定方案是 TMP shader 内使用 VRChat shader global：
+
+```hlsl
+uniform float _VRChatMirrorMode;
+```
+
+镜子渲染时预翻转顶点位置，普通视角保持不变。材质上保留 `_MirrorFlip` 开关，并继续设置 TMP outline、underlay、轻微加粗参数。不要调用当前 YamaPlayer 中不存在的 `Controller.MirrorFlip`。
+
+### 粉色材质与 TMP shader
+
+粉色材质说明 shader 缺失或材质属性不兼容。v1.01 的生成器会把弹幕 TMP 材质切到 `YamaBiliDanmaku/TMP Mirror Readable`，并从现有 TMP 材质复制 atlas 与 outline 相关属性。不要为了镜子可读直接替换成非 TMP shader，也不要丢失 font atlas、outline、underlay 或 weight 参数。
+
+### UI 射线点击
+
+一开始我把按钮做成独立小 Canvas 或挂在根 Canvas 下面，导致射线命中链路不稳定。后来又只补 `VRC_UiShape` 类型名，仍然不足。真正需要同时满足：
+
+- 独立 World Space Canvas。
+- Canvas 物体上有 `GraphicRaycaster`、`VRC_UiShape`、`BoxCollider`。
+- Canvas 不在 Unity 的 `UI` layer。
+- BoxCollider 覆盖按钮区域，并留有足够厚度。
+- Label 也开启 `raycastTarget`，保证点文字时能命中 UI。
+
+参考过 `VRCPlayersOnlyMirrorCutout` 的 `Menu / MirrorToggle / Label` 结构，最终保留其 World Space Canvas、`VRC_UiShape`、BoxCollider 与 Supersampled UI 材质思路，但没有复刻勾选框视觉，因为本组件两个控件都应该以文字显示当前状态。
+
+### Button 与 Toggle 语义
+
+弹幕开关最初做成 Toggle，显示区域也一度做成 Toggle。这样视觉上会出现“填空/勾选框”，但显示区域是三态循环，不是布尔开关；弹幕开关虽然是布尔值，但用户希望两个控件都只显示当前状态。因此 v1.01 统一为普通 Button：
+
+- `Button.onClick -> CycleDisplayAreaMode`
+- `Button.onClick -> ToggleDanmaku`
+
+如果以后重新引入 Toggle，需要明确它只表达布尔状态，不能拿来表达三态循环。
+
+### UdonSharp 事件绑定
+
+最关键的交互问题不是按钮外观，而是事件绑定目标。我曾把 UnityEvent 直接绑定到 UdonSharp C# proxy：
+
+```text
+UdonSharpBehaviour.SendCustomEvent
+```
+
+这在 Inspector 中看起来像绑定成功，但 VRChat 运行时可能不触发。YamaPlayer 自己的构建流程使用的是：
+
+```text
+UdonSharpEditorUtility.GetBackingUdonBehaviour(...)
+```
+
+因此 v1.01 生成器也改为把 `Button.onClick` 绑定到 backing `UdonBehaviour.SendCustomEvent`。后续新增 UnityEvent 绑定必须沿用这个方式。
+
+### 显示区域切换
+
+早期切换 `Full/Half/1/4` 时调用了 `HideAllTexts()`，导致屏幕上已有弹幕瞬间消失。正确行为是只影响后续弹幕：
+
+- 已发射弹幕继续使用发射时保存的 `_activeY` 和运动时间。
+- 新发射弹幕在 `ShowLine()` 中读取最新 `_displayAreaMode`。
+- 切换时只 `ClearLaneTimers()`，让新区域轨道可立即重新分配。
+
+### 发布纪律
+
+本轮多次临时 beta 包验证了以下纪律的重要性：
+
+- beta 包只包含 `YamaBiliDanmakuV3/`，不混入 README 或 docs。
+- 稳定包才包含 README/docs，并按真实版本号命名。
+- 用户确认前不提交、不 push、不创建 GitHub release。
+- 可用 beta 基线需要明确记录；本轮 `beta9.3` 是交互可用基线，`beta9.4` 在其上修正显示区域切换不清屏。
+
+## 12. 服务端依赖与缓存
 
 服务端使用 Node.js 20 Docker 镜像，宿主机默认映射 `7858 -> 3000`。B 站信息、媒体直链和弹幕分别缓存；相同键的并发请求通过 inflight 合并，避免缓存未建立时重复请求上游。
 
@@ -244,7 +329,7 @@ DisableDanmaku
 7. 修改视觉参数后执行 Apply 菜单并检查材质。
 8. Top/Bottom URL 输入框手动绑定正确。
 9. Docker `/health`、`/player/` 和强制 `__dm=1` 正常。
-10. Release 同时包含同版本 Unity ZIP 和 Server ZIP。
+10. 如果服务端没有变化，Unity 组件 release 只发布同版本 Unity ZIP，并在 release notes 中说明继续使用 v1.0.0 server。
 
 ## 不应重新引入的方案
 
@@ -252,6 +337,9 @@ DisableDanmaku
 - 不假设旧版 `YamaPlayerModule` 类型仍存在。
 - 不为描边复制整套 TextMeshPro 对象。
 - 不在 Udon 运行时调用未经确认可暴露的 TMP API。
+- 不把 UnityEvent 直接绑定到 UdonSharp C# proxy；需要绑定 backing `UdonBehaviour`。
+- 不用 Toggle 表达 `Full/Half/1/4` 这种三态循环状态。
+- 不在切换显示区域时调用 `HideAllTexts()` 清空已有弹幕。
 - 不使用全局 `room=main` 保存当前视频。
 - 不通过组件顺序自动猜测 URL 输入框。
 - 不在一次修改中同时替换下载、解析、同步和渲染四条路径。

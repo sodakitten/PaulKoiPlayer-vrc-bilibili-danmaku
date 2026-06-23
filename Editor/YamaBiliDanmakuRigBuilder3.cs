@@ -1,11 +1,14 @@
 using TMPro;
 using UdonSharp;
+using UdonSharpEditor;
 using UnityEditor;
 using UnityEditor.Events;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Events;
 using UnityEngine.UI;
 using VRC.SDK3.Components;
+using VRC.Udon;
 using Yamadev.YamaStream;
 
 namespace YamaBiliDanmakuV3.Editor
@@ -18,6 +21,16 @@ namespace YamaBiliDanmakuV3.Editor
     private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?url=";
     private const string DefaultPrefabPath = "Assets/YamaBiliDanmakuV3/Prefabs/Bili Danmaku Module.prefab";
     private const string OutlineMaterialPath = "Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku TMP Outline.mat";
+    private const string ButtonMaterialPath = "Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku UI Button.mat";
+    private const string MirrorReadableShaderName = "YamaBiliDanmaku/TMP Mirror Readable";
+    private const string ButtonShaderName = "YamaBiliDanmaku/UI Button";
+    private const string ControlsCanvasName = "Danmaku Controls Canvas";
+    private const float ControlsWidth = 260f;
+    private const float ControlsHeight = 104f;
+    private const float ControlsPadding = 12f;
+    private const float ControlButtonWidth = 236f;
+    private const float ControlButtonHeight = 40f;
+    private const float ControlsLocalZ = -8f;
     private const float DefaultOutlineWidth = 0.11f;
     private const float DefaultOutlineAlpha = 0.7f;
     private const float DefaultFaceDilate = 0.012f;
@@ -182,6 +195,12 @@ namespace YamaBiliDanmakuV3.Editor
       status.text = "idle";
       statusObject.SetActive(false);
 
+      Button displayAreaButton;
+      TextMeshProUGUI displayAreaButtonLabel;
+      Button danmakuToggleButton;
+      TextMeshProUGUI danmakuToggleButtonLabel;
+      CreateOrFindControlsCanvas(root, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel);
+
       System.Type moduleType = FindType("YamaBiliDanmakuV3.YamaBiliDanmakuModule3");
       if (moduleType == null)
       {
@@ -205,7 +224,7 @@ namespace YamaBiliDanmakuV3.Editor
         return null;
       }
 
-      WireModule(module, controller, laneRoot, status, pool);
+      WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
       CreateUrlPrefixHelper(root, controller);
 
       return root;
@@ -234,6 +253,230 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       WireUrlPrefixHelper(helper, controller);
+    }
+
+    private static void CreateOrFindControlsCanvas(GameObject root, out Button displayAreaButton, out TextMeshProUGUI displayAreaButtonLabel, out Button danmakuToggleButton, out TextMeshProUGUI danmakuToggleButtonLabel)
+    {
+      displayAreaButton = null;
+      displayAreaButtonLabel = null;
+      danmakuToggleButton = null;
+      danmakuToggleButtonLabel = null;
+      if (root == null) return;
+
+      CleanupLegacyRootButton(root, "Display Area Button");
+      CleanupLegacyRootButton(root, "Danmaku Toggle Button");
+
+      Transform controlsTransform = root.transform.Find(ControlsCanvasName);
+      GameObject controlsObject = controlsTransform == null ? null : controlsTransform.gameObject;
+      if (controlsObject == null)
+      {
+        controlsObject = new GameObject(ControlsCanvasName, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        controlsObject.transform.SetParent(root.transform, false);
+      }
+
+      controlsObject.layer = 0;
+      RectTransform controlsRect = controlsObject.GetComponent<RectTransform>();
+      controlsRect.anchorMin = new Vector2(1f, 1f);
+      controlsRect.anchorMax = new Vector2(1f, 1f);
+      controlsRect.pivot = new Vector2(0f, 1f);
+      controlsRect.anchoredPosition = new Vector2(24f, -18f);
+      controlsRect.sizeDelta = new Vector2(ControlsWidth, ControlsHeight);
+      Vector3 localPosition = controlsRect.localPosition;
+      localPosition.z = ControlsLocalZ;
+      controlsRect.localPosition = localPosition;
+      controlsRect.localRotation = Quaternion.identity;
+      controlsRect.localScale = Vector3.one;
+
+      Canvas canvas = controlsObject.GetComponent<Canvas>();
+      if (canvas == null) canvas = controlsObject.AddComponent<Canvas>();
+      canvas.renderMode = RenderMode.WorldSpace;
+      canvas.overrideSorting = true;
+      canvas.sortingOrder = 35;
+
+      CanvasScaler scaler = controlsObject.GetComponent<CanvasScaler>();
+      if (scaler == null) scaler = controlsObject.AddComponent<CanvasScaler>();
+      scaler.dynamicPixelsPerUnit = 10f;
+
+      GraphicRaycaster raycaster = controlsObject.GetComponent<GraphicRaycaster>();
+      if (raycaster == null) raycaster = controlsObject.AddComponent<GraphicRaycaster>();
+      raycaster.ignoreReversedGraphics = true;
+
+      EnsureVrcUiShape(controlsObject);
+      BoxCollider collider = controlsObject.GetComponent<BoxCollider>();
+      if (collider == null) collider = controlsObject.AddComponent<BoxCollider>();
+      collider.isTrigger = true;
+      collider.center = new Vector3(ControlsWidth * 0.5f, -ControlsHeight * 0.5f, 0f);
+      collider.size = new Vector3(ControlsWidth + 24f, ControlsHeight + 24f, 2f);
+
+      CreateOrFindControlsBackground(controlsObject);
+      CreateOrFindCycleButton(controlsObject, "Display Area Button", new Vector2(ControlsPadding, -ControlsPadding), "Danmaku: Full", out displayAreaButton, out displayAreaButtonLabel);
+      CreateOrFindCycleButton(controlsObject, "Danmaku Toggle Button", new Vector2(ControlsPadding, -(ControlsPadding + ControlButtonHeight + 8f)), "Danmaku: On", out danmakuToggleButton, out danmakuToggleButtonLabel);
+      SetLayerRecursively(controlsObject, 0);
+    }
+
+    private static void CreateOrFindControlsBackground(GameObject controlsObject)
+    {
+      GameObject backgroundObject = CreateOrFindChild(controlsObject, "BG", typeof(RectTransform), typeof(Image));
+      backgroundObject.transform.SetAsFirstSibling();
+      RectTransform backgroundRect = backgroundObject.GetComponent<RectTransform>();
+      backgroundRect.anchorMin = Vector2.zero;
+      backgroundRect.anchorMax = Vector2.one;
+      backgroundRect.offsetMin = Vector2.zero;
+      backgroundRect.offsetMax = Vector2.zero;
+      Image background = backgroundObject.GetComponent<Image>();
+      background.color = new Color(0f, 0f, 0f, 0.38f);
+      background.raycastTarget = true;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) background.material = material;
+    }
+
+    private static void CreateOrFindCycleButton(GameObject controlsObject, string objectName, Vector2 anchoredPosition, string labelText, out Button button, out TextMeshProUGUI label)
+    {
+      button = null;
+      label = null;
+      if (controlsObject == null) return;
+
+      Transform buttonTransform = controlsObject.transform.Find(objectName);
+      GameObject buttonObject = buttonTransform == null ? null : buttonTransform.gameObject;
+      if (buttonObject == null)
+      {
+        buttonObject = new GameObject(objectName, typeof(RectTransform), typeof(Image), typeof(Button));
+        buttonObject.transform.SetParent(controlsObject.transform, false);
+      }
+
+      DestroyComponent<Toggle>(buttonObject);
+      Transform oldBackground = buttonObject.transform.Find("Background");
+      if (oldBackground != null) UnityEngine.Object.DestroyImmediate(oldBackground.gameObject);
+
+      RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+      buttonRect.anchorMin = new Vector2(0f, 1f);
+      buttonRect.anchorMax = new Vector2(0f, 1f);
+      buttonRect.pivot = new Vector2(0f, 1f);
+      buttonRect.anchoredPosition = anchoredPosition;
+      buttonRect.sizeDelta = new Vector2(ControlButtonWidth, ControlButtonHeight);
+      buttonRect.localRotation = Quaternion.identity;
+      buttonRect.localScale = Vector3.one;
+
+      Image image = buttonObject.GetComponent<Image>();
+      if (image == null) image = buttonObject.AddComponent<Image>();
+      image.color = new Color(0f, 0f, 0f, 0.62f);
+      image.raycastTarget = true;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) image.material = material;
+
+      button = buttonObject.GetComponent<Button>();
+      if (button == null) button = buttonObject.AddComponent<Button>();
+      button.interactable = true;
+      button.targetGraphic = image;
+      button.transition = Selectable.Transition.ColorTint;
+      ColorBlock colors = button.colors;
+      colors.normalColor = Color.white;
+      colors.highlightedColor = new Color(0.82f, 0.92f, 1f, 1f);
+      colors.pressedColor = new Color(0.58f, 0.78f, 1f, 1f);
+      colors.selectedColor = colors.highlightedColor;
+      colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+      button.colors = colors;
+      Navigation navigation = button.navigation;
+      navigation.mode = Navigation.Mode.None;
+      button.navigation = navigation;
+
+      Transform labelTransform = buttonObject.transform.Find("Label");
+      GameObject labelObject = labelTransform == null ? null : labelTransform.gameObject;
+      if (labelObject == null)
+      {
+        labelObject = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
+        labelObject.transform.SetParent(buttonObject.transform, false);
+      }
+
+      RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+      labelRect.anchorMin = Vector2.zero;
+      labelRect.anchorMax = Vector2.one;
+      labelRect.offsetMin = Vector2.zero;
+      labelRect.offsetMax = Vector2.zero;
+      labelRect.localRotation = Quaternion.identity;
+      labelRect.localScale = Vector3.one;
+
+      label = labelObject.GetComponent<TextMeshProUGUI>();
+      label.raycastTarget = true;
+      label.alignment = TextAlignmentOptions.Center;
+      label.fontSize = 18f;
+      label.fontStyle = FontStyles.Bold;
+      label.enableWordWrapping = false;
+      label.overflowMode = TextOverflowModes.Ellipsis;
+      label.color = new Color(1f, 1f, 1f, 0.94f);
+      label.text = labelText;
+    }
+
+    private static GameObject CreateOrFindChild(GameObject parent, string objectName, params System.Type[] components)
+    {
+      Transform child = parent.transform.Find(objectName);
+      GameObject childObject = child == null ? null : child.gameObject;
+      if (childObject == null)
+      {
+        childObject = new GameObject(objectName, components);
+        childObject.transform.SetParent(parent.transform, false);
+      }
+
+      for (int i = 0; i < components.Length; i++)
+      {
+        if (childObject.GetComponent(components[i]) == null) childObject.AddComponent(components[i]);
+      }
+
+      return childObject;
+    }
+
+    private static void DestroyComponent<T>(GameObject gameObject) where T : Component
+    {
+      T component = gameObject == null ? null : gameObject.GetComponent<T>();
+      if (component != null) UnityEngine.Object.DestroyImmediate(component);
+    }
+
+    private static void CleanupLegacyRootButton(GameObject root, string objectName)
+    {
+      if (root == null || string.IsNullOrEmpty(objectName)) return;
+      Transform legacy = root.transform.Find(objectName);
+      if (legacy != null) UnityEngine.Object.DestroyImmediate(legacy.gameObject);
+    }
+
+    private static void EnsureVrcUiShape(GameObject canvasObject)
+    {
+      if (canvasObject == null) return;
+
+      System.Type uiShapeType = FindVrcUiShapeType();
+      if (uiShapeType == null)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: VRC_UiShape type was not found. Add VRC_UiShape to Danmaku Controls Canvas manually if the buttons are not clickable in VRChat.");
+        return;
+      }
+
+      if (canvasObject.GetComponent(uiShapeType) == null)
+      {
+        canvasObject.AddComponent(uiShapeType);
+      }
+    }
+
+    private static System.Type FindVrcUiShapeType()
+    {
+      System.Type uiShapeType = FindType("VRC.SDK3.Components.VRCUiShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC.SDK3.Components.VRC_UIShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC.SDK3.Components.VRC_UiShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC.SDKBase.VRCUiShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC.SDKBase.VRC_UIShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC.SDKBase.VRC_UiShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRCUiShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC_UIShape");
+      if (uiShapeType == null) uiShapeType = FindType("VRC_UiShape");
+      return uiShapeType;
+    }
+
+    private static void SetLayerRecursively(GameObject gameObject, int layer)
+    {
+      if (gameObject == null) return;
+      gameObject.layer = layer;
+      for (int i = 0; i < gameObject.transform.childCount; i++)
+      {
+        SetLayerRecursively(gameObject.transform.GetChild(i).gameObject, layer);
+      }
     }
 
     private static Controller FindTargetController()
@@ -378,8 +621,13 @@ namespace YamaBiliDanmakuV3.Editor
       TextMeshProUGUI status = null;
       Transform statusTransform = selected.transform.Find("Status");
       if (statusTransform != null) status = statusTransform.GetComponent<TextMeshProUGUI>();
+      Button displayAreaButton;
+      TextMeshProUGUI displayAreaButtonLabel;
+      Button danmakuToggleButton;
+      TextMeshProUGUI danmakuToggleButtonLabel;
+      CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel);
       TextMeshProUGUI[] pool = selected.GetComponentsInChildren<TextMeshProUGUI>(true);
-      WireModule(module, controller, laneRoot, status, pool);
+      WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
       ApplyVisualStyleFromModule(module, pool);
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "References wired.", "OK");
     }
@@ -526,7 +774,7 @@ namespace YamaBiliDanmakuV3.Editor
       if (inputs.Length > 1) topInput = inputs[1];
     }
 
-    private static void WireModule(Component module, Controller controller, RectTransform laneRoot, TextMeshProUGUI status, TextMeshProUGUI[] rawPool)
+    private static void WireModule(Component module, Controller controller, RectTransform laneRoot, TextMeshProUGUI status, TextMeshProUGUI displayAreaButtonLabel, TextMeshProUGUI danmakuToggleButtonLabel, Button displayAreaButton, Button danmakuToggleButton, TextMeshProUGUI[] rawPool)
     {
       if (module == null) return;
 
@@ -540,6 +788,12 @@ namespace YamaBiliDanmakuV3.Editor
       SerializedProperty statusProperty = serialized.FindProperty("_statusText");
       if (statusProperty != null) statusProperty.objectReferenceValue = status;
 
+      SerializedProperty displayAreaLabelProperty = serialized.FindProperty("_displayAreaButtonLabel");
+      if (displayAreaLabelProperty != null) displayAreaLabelProperty.objectReferenceValue = displayAreaButtonLabel;
+
+      SerializedProperty danmakuToggleLabelProperty = serialized.FindProperty("_danmakuToggleButtonLabel");
+      if (danmakuToggleLabelProperty != null) danmakuToggleLabelProperty.objectReferenceValue = danmakuToggleButtonLabel;
+
       SetBool(serialized, "_loadFromCurrentYamaPlayerUrl", true);
       SetInt(serialized, "_laneCount", 12);
       SetFloat(serialized, "_lineHeight", 56f);
@@ -548,6 +802,7 @@ namespace YamaBiliDanmakuV3.Editor
       SetFloat(serialized, "_statusVisibleSeconds", 2f);
       SetFloat(serialized, "_fontScale", 1.1f);
       SetFloat(serialized, "_textAlpha", 0.72f);
+      SetInt(serialized, "_displayAreaMode", 0);
       SetBool(serialized, "_editorBoldText", true);
       SetBool(serialized, "_editorHeavyOutlineEnabled", true);
       SetFloat(serialized, "_editorOutlineWidth", DefaultOutlineWidth);
@@ -574,7 +829,50 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       serialized.ApplyModifiedPropertiesWithoutUndo();
+      AddModuleButtonClick(displayAreaButton, module, "CycleDisplayAreaMode");
+      AddModuleButtonClick(danmakuToggleButton, module, "ToggleDanmaku");
       ApplyVisualStyleFromModule(module, rawPool);
+    }
+
+    private static void AddModuleButtonClick(Button button, Component module, string eventName)
+    {
+      if (button == null || module == null || string.IsNullOrEmpty(eventName)) return;
+
+      UnityAction<string> sendEvent;
+      if (!TryGetSendCustomEventAction(module, out sendEvent))
+      {
+        Debug.LogWarning("Yama Bili Danmaku: module is not an UdonSharpBehaviour, cannot wire controls button.");
+        return;
+      }
+
+      button.onClick = new Button.ButtonClickedEvent();
+      UnityEventTools.AddStringPersistentListener(button.onClick, sendEvent, eventName);
+      EditorUtility.SetDirty(button);
+    }
+
+    private static bool TryGetSendCustomEventAction(Component component, out UnityAction<string> sendEvent)
+    {
+      sendEvent = null;
+
+      UdonSharpBehaviour behaviour = component as UdonSharpBehaviour;
+      if (behaviour == null) return false;
+
+      try
+      {
+        UdonBehaviour backing = UdonSharpEditorUtility.GetBackingUdonBehaviour(behaviour);
+        if (backing != null)
+        {
+          sendEvent = backing.SendCustomEvent;
+          return true;
+        }
+      }
+      catch (System.Exception exception)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: failed to resolve backing UdonBehaviour, falling back to UdonSharp proxy. " + exception.Message);
+      }
+
+      sendEvent = behaviour.SendCustomEvent;
+      return true;
     }
 
     private static void ApplyVisualStyleFromModule(Component module, TextMeshProUGUI[] rawPool)
@@ -639,6 +937,32 @@ namespace YamaBiliDanmakuV3.Editor
       return material;
     }
 
+    private static Material GetOrCreateButtonMaterial()
+    {
+      Material material = AssetDatabase.LoadAssetAtPath<Material>(ButtonMaterialPath);
+      Shader shader = Shader.Find("VRChat/Mobile/Worlds/Supersampled UI");
+      if (shader == null) shader = Shader.Find(ButtonShaderName);
+      if (shader == null)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: UI button shader was not found. Button images may trigger the VRChat SDK built-in UI shader alert.");
+        return material;
+      }
+
+      if (material == null)
+      {
+        EnsureDirectoryForAsset(ButtonMaterialPath);
+        material = new Material(shader);
+        material.name = "Bili Danmaku UI Button";
+        AssetDatabase.CreateAsset(material, ButtonMaterialPath);
+      }
+
+      if (material.shader != shader) material.shader = shader;
+      if (material.HasProperty("_Color")) material.SetColor("_Color", Color.white);
+      EditorUtility.SetDirty(material);
+      AssetDatabase.SaveAssets();
+      return material;
+    }
+
     private static Material FindSourceFontMaterial(TextMeshProUGUI[] rawPool)
     {
       if (rawPool == null) return null;
@@ -662,6 +986,7 @@ namespace YamaBiliDanmakuV3.Editor
     {
       if (material == null) return;
 
+      ApplyMirrorReadableShader(material);
       material.EnableKeyword("OUTLINE_ON");
       material.EnableKeyword("UNDERLAY_ON");
       if (material.HasProperty("_OutlineWidth")) material.SetFloat("_OutlineWidth", outlineWidth);
@@ -676,6 +1001,23 @@ namespace YamaBiliDanmakuV3.Editor
       if (material.HasProperty("_UnderlayOffsetY")) material.SetFloat("_UnderlayOffsetY", 0f);
       if (material.HasProperty("_UnderlayDilate")) material.SetFloat("_UnderlayDilate", DefaultUnderlayDilate);
       if (material.HasProperty("_UnderlaySoftness")) material.SetFloat("_UnderlaySoftness", DefaultUnderlaySoftness);
+      if (material.HasProperty("_MirrorFlip")) material.SetInt("_MirrorFlip", 1);
+      if (material.HasProperty("_YBDMForceMirrorFlip")) material.SetFloat("_YBDMForceMirrorFlip", 0f);
+    }
+
+    private static void ApplyMirrorReadableShader(Material material)
+    {
+      Shader shader = Shader.Find(MirrorReadableShaderName);
+      if (shader == null)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: mirror-readable TMP shader was not found. Keeping the current TMP shader.");
+        return;
+      }
+
+      if (material.shader != shader)
+      {
+        material.shader = shader;
+      }
     }
 
     private static void SetInt(SerializedObject serialized, string name, int value)

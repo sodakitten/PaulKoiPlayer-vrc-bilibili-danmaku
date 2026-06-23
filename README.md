@@ -10,13 +10,13 @@
 
 示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-当前稳定版为 **v1.0.0**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。
+当前稳定版为 **1.01**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
 ## 使用前需要安装
 
-如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，当前 v1.0.0 还需要：
+如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，当前 1.01 还需要：
 
 - [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：必须先安装到 Unity 项目中，本组件会挂载到 YamaPlayer 上。
 - TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
@@ -47,11 +47,12 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 下载
 
-统一版本页：[v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0)
+当前正式包：
 
-- `vrc-bilibili-danmaku_1.0.0.unitypackage`：推荐使用的 Unity 导入包。
-- `vrc-bilibili-danmaku-unity-v1.0.0.zip`：Unity / UdonSharp 组件源码目录。
-- `vrc-bilibili-danmaku-server-v1.0.0.zip`：Docker 服务端。
+- `PaulKoiPlayer-vrc-bilibili-danmaku-1.01.unitypackage`：Unity 导入包，推荐普通安装使用。
+- `1.01.zip`：Unity / UdonSharp 组件源码包，适合手动检查或复制文件。
+
+服务端未在 1.01 中变更，继续使用 v1.0.0 对应的 `server/`。
 
 ## 功能
 
@@ -71,7 +72,7 @@ https://danmaku.paulkoishi.com/player/?url=
 - VRChat Worlds SDK（VCC World 项目通常已经包含）
 - UdonSharp（当前 VRChat Worlds SDK 集成版本即可）
 - TextMeshPro Essentials
-- YamaPlayer（当前 v1.0.0 必需）
+- YamaPlayer（当前 1.01 必需）
 - 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
 默认解析服务前缀：
@@ -82,7 +83,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. 从 [v1.0.0 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.0.0) 下载 `vrc-bilibili-danmaku_1.0.0.unitypackage` 并导入 Unity 项目。
+1. 下载 `PaulKoiPlayer-vrc-bilibili-danmaku-1.01.unitypackage` 并导入 Unity，或下载 `1.01.zip` 后手动解压。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -132,7 +133,7 @@ https://danmaku.paulkoishi.com/player/?url=<网易云歌单链接>&p=1
 
 ## 常用设置
 
-> **这些设置只能在 Unity 编辑器中调整。** 当前版本不会在 VRChat 世界里生成可交互的设置面板。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移都需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
+> **这些设置只能在 Unity 编辑器中调整。** 1.01 只生成轻量的玩家控制按钮，用于切换显示区域和开关弹幕。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移仍需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
 
 | 设置 | 默认值 | 说明 |
 | --- | ---: | --- |
@@ -168,17 +169,26 @@ Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 
 只修改 Inspector 数值但不执行上述 Apply 菜单，已有弹幕文字的材质不会更新，看起来就会像描边或粗细没有变化。新生成的模块会在创建时自动应用当前默认样式。
 
-## 自定义弹幕开关
+## 世界内弹幕控制
 
-当前版本不会自动生成玩家可点击的弹幕开关或其他互动控制组件。下面这些只是供世界作者使用的 Udon 公开事件：
+1.01 会在 `Bili Danmaku Module` 下生成一个轻量的 `Danmaku Controls Canvas`。它包含两个玩家可点击的按钮：
+
+- `Danmaku: Full / Half / 1/4`：循环切换全屏、上半屏、上四分之一屏显示区域。
+- `Danmaku: On / Off`：开关弹幕显示。
+
+切换显示区域时，已经发射出来的弹幕不会被清空；后续新弹幕会按新的区域输出。
+
+这些 Udon 公开事件仍可供世界作者自定义 UI 或脚本调用：
 
 ```text
 ToggleDanmaku
 EnableDanmaku
 DisableDanmaku
+SetFullScreenDanmaku
+SetHalfScreenDanmaku
+SetQuarterScreenDanmaku
+CycleDisplayAreaMode
 ```
-
-如需让玩家在世界内开关弹幕，世界作者必须在 Unity 中自行创建按钮或 Toggle，再将其事件手动绑定到弹幕模块。没有完成这一步时，上传后的世界里不会出现可互动的弹幕控制界面。
 
 ## 常见问题
 
@@ -202,15 +212,25 @@ UdonSharp > Compile All UdonSharp Programs
 
 ## 当前版本说明
 
+1.01 相比 v1.0.0 主要更新 Unity 组件端：
+
+- 增加镜子可读的 TextMeshPro 弹幕 shader，参考 YamaPlayer 的 `_MirrorFlip` + `_VRChatMirrorMode` 镜子反转模式，在 VRChat 镜子渲染时预翻转弹幕文字，并保留现有 TMP 描边、Underlay 与轻微加粗。
+- 新增 `Danmaku Controls Canvas`，提供世界内玩家可点击的弹幕开关和全屏/半屏/四分之一屏显示区域切换。
+- 显示区域切换只影响后续新弹幕，已经在屏幕上的弹幕不会被清空。
+- UI 事件绑定改为 backing `UdonBehaviour.SendCustomEvent`，与 YamaPlayer 的事件绑定方式一致。
+- 修正长弹幕刚发射时可能在屏幕边缘闪一下的问题。
+
+1.01 没有修改 `server/`，服务端继续使用 v1.0.0 对应版本。
+
 v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docker 服务端。组件包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
 
 ## 鸣谢与相关链接
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/)：当前公共解析服务状态页；如果无法访问，说明当前公共服务不可用。
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 v1.0.0 适配并测试的 VRChat 视频播放器。
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 1.01 适配并测试的 VRChat 视频播放器。
 - [music.znnu.com](https://music.znnu.com/)：服务端网易云音乐解析所使用的第三方服务。
 - [yionchi](https://github.com/yionchi)：`music.znnu.com` 相关服务作者。
 
 ## 后续计划
 
-后续版本会继续补充世界内互动功能，计划方向包括玩家可操作的弹幕开关、弹幕密度/数量控制、全屏与半屏显示区域，以及适合 VRChat 的简洁设置界面。实现时会优先保护当前稳定的加载、同步和渲染路径；在这些功能正式发布前，v1.0.0 仍需要由世界作者在 Unity Inspector 中完成配置。
+后续版本会继续补充弹幕密度/数量控制、更多显示区域选项，以及适合 VRChat 的简洁设置界面。实现时会优先保护当前稳定的加载、同步和渲染路径。
