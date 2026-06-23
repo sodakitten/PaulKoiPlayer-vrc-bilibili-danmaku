@@ -335,7 +335,89 @@ v1.02 还保留了 `beta10.0` 的几处小优化：
 
 这些修改的目标是降低无效 CPU/UI 工作量，不改变 TMP 材质、透明度、描边、Underlay、镜子可读 shader 或按钮交互结构。
 
-## 13. 服务端依赖与缓存
+## 13. iwaSync3 与 VizVid 专用适配线
+
+v1.02 之后开始拆分第三方播放器专用线。目标不是把 YamaPlayer 适配层改成万能抽象，而是在不动稳定主链路的前提下，为不同播放器提供最小接入层：
+
+- YamaPlayer 线继续使用 `YamaBiliDanmakuV3/`。
+- iwaSync3 线使用 `IwaBiliDanmakuV3/`，依赖 `HoshinoLabs.IwaSync3.Udon.VideoCore`。
+- VizVid 线使用 `VizVidBiliDanmakuV3/`，依赖 `JLChnToZ.VRC.VVMW.Core`。
+
+这三条线可以复用弹幕解析、对象池、显示区域、弹幕开关、描边和镜子可读 shader 思路，但播放器接口必须各自隔离。不要让 VizVid 线引用 YamaPlayer 或 iwaSync3 类型；也不要为了适配新播放器去改 YamaPlayer 已验证可用的类名、namespace、文件名或 U# Program Asset 关联。
+
+### iwaSync3 线
+
+iwaSync3 的可用接入点是：
+
+```text
+HoshinoLabs.IwaSync3.Udon.VideoCore
+```
+
+当前 iwa 线从 `VideoCore.url` 读取当前 URL，从 `time / paused / isPlaying / isLive` 读取播放状态，并通过 iwa 的 listener 事件重置或恢复弹幕。默认生成的弹幕模块使用用户实测正常的画面参数：
+
+```text
+Canvas Size      2875 x 1600
+Canvas Position  -0.005, 1.001, -0.02
+Canvas Scale      0.001
+Base Font Size   52
+Font Scale        1.1
+Line Height       92
+Line Spacing      1.35
+Lane Count        12
+```
+
+曾经踩过的坑是直接设置 `TextMeshProUGUI.fontSize` 会在 UdonSharp 中报 `Method is not exposed to Udon: 'text.fontSize'`。因此运行时不要改 TMP 字号；字号、行高和材质样式应由编辑器生成器在创建对象时写入，运行时只通过 `RectTransform.localScale` 和自身轨道计算控制观感。
+
+iwa 的 URL 前缀辅助应绑定 iwaSync3 的 `VRCUrlInputField`，常见路径是 `Canvas (1)/Panel/Address` 或 `Canvas (1)/Address`。如果自动搜索不到，允许世界作者手动拖入，但不要把 Yama 的 Top/Bottom URL Input 自动查找逻辑搬过来。
+
+### VizVid 线
+
+VizVid 1.7.5 的可用接入点是：
+
+```text
+JLChnToZ.VRC.VVMW.Core
+```
+
+VizVid Core 公开了当前 URL 和播放状态，因此 VizVid 线不需要读私有字段，也不需要依赖 Yama/iwa：
+
+```text
+Core.Url
+Core.Time
+Core.IsPlaying
+Core.IsPaused
+Core.IsStatic
+```
+
+VizVid 的事件机制来自 `UdonSharpEventSender`。它的 Core 会通过 `SendEvent(...)` 广播事件，正确做法是在模块启动时只注册必要的命名事件：
+
+```text
+_core._AddListener(this, "_OnVideoBeginLoad")
+_core._AddListener(this, "OnVideoPlay")
+_core._AddListener(this, "OnVideoPause")
+_core._AddListener(this, "_onVideoEnd")
+_core._AddListener(this, "_onVideoLoop")
+_core._AddListener(this, "_OnVideoError")
+```
+
+不要注册全量 listener 后让所有 UI、音量、同步事件都打到弹幕模块；这会增加无意义 Udon 事件调用，也会让后续排查更难。
+
+VizVid 测试包当前命名为：
+
+```text
+vizvid1.0.zip
+```
+
+它只包含 `VizVidBiliDanmakuV3/`，不包含 README、docs、Yama 线或 iwa 线。解压后应直接进入 package 文件夹。正式发布前仍需用户在 Unity/VRChat 中确认：编译无错误、URL 前缀可用、弹幕位置和字号合适、按钮可点、暂停/跳转/关闭再打开弹幕行为正常。
+
+### 跨播放器线的维护规则
+
+- 播放器适配层可以不同，弹幕解析和渲染主逻辑应保持同一种行为。
+- 显示区域切换仍然只影响后续弹幕，不能清空已发射弹幕。
+- 弹幕关闭时已有弹幕瞬间隐藏；重新打开时，如果时间线上该弹幕还未结束，应按当前播放时间恢复到正确位置。
+- 轨道满时优先丢弃新弹幕，不要强行压到已占用轨道造成严重重叠。
+- 测试包只打包对应播放器线目录；稳定版本和 GitHub release 只有在用户明确确认后再提交、推送和发布。
+
+## 14. 服务端依赖与缓存
 
 服务端使用 Node.js 20 Docker 镜像，宿主机默认映射 `7858 -> 3000`。B 站信息、媒体直链和弹幕分别缓存；相同键的并发请求通过 inflight 合并，避免缓存未建立时重复请求上游。
 
@@ -371,6 +453,7 @@ v1.02 还保留了 `beta10.0` 的几处小优化：
 - 不把 `_maxDanmakuLines` 降回 1600，除非重新验证高密度弹幕视频不会被截断。
 - 不使用全局 `room=main` 保存当前视频。
 - 不通过组件顺序自动猜测 URL 输入框。
+- 不让 YamaPlayer、iwaSync3、VizVid 三条适配线互相引用对方的播放器类型。
 - 不在一次修改中同时替换下载、解析、同步和渲染四条路径。
 
 这份记录应随架构变化继续更新。新功能不仅要记录“做了什么”，也要记录它保护了哪条稳定路径，以及验证过哪些失败场景。
