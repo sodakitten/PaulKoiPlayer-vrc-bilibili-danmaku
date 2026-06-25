@@ -1,6 +1,6 @@
 # PaulKoiPlayer Danmaku Server
 
-Version: `1.0.0`
+Version: `1.0.3`
 
 A small Dockerized Node.js proxy for VRChat video player style playback URLs.
 
@@ -15,7 +15,8 @@ It accepts a `/player/?url=...` request, resolves supported Bilibili and NetEase
 - NetEase Cloud Music song and playlist parsing through `music.znnu.com`.
 - NetEase playlist page selection with `p` or `page`.
 - NetEase short-link support through `163cn.tv`.
-- In-memory cache for Bilibili view/playurl/danmaku data and NetEase playlist/song URLs.
+- Bounded cache for Bilibili view/playurl data and NetEase playlist/song URLs.
+- Persistent Bilibili danmaku disk cache under `/app/data/danmaku-cache`, with bounded dashboard display.
 - Persistent dashboard counters under `/app/data/stats.json`, including Bilibili video redirects, Bilibili live redirects, NetEase redirects, danmaku requests, cache hits, and emitted danmaku rows.
 - No database required.
 
@@ -152,7 +153,14 @@ Or URL-encode the inner URL so `#` becomes `%23`.
 | `DISPLAY_TIME_ZONE` | `Asia/Shanghai` | Dashboard display timezone for dates such as service start time. |
 | `VIEW_CACHE_TTL_SECONDS` | `1800` | Bilibili video view cache TTL. |
 | `VIDEO_URL_CACHE_TTL_SECONDS` | `600` | Bilibili direct video URL cache TTL. |
-| `DANMAKU_CACHE_TTL_SECONDS` | `21600` | Bilibili danmaku cache TTL. |
+| `DANMAKU_CACHE_TTL_SECONDS` | `21600` | In-memory fallback TTL for legacy danmaku cache entries. Persistent disk cache uses the settings below. |
+| `DANMAKU_DISK_CACHE_DIR` | `/app/data/danmaku-cache` | Persistent Bilibili danmaku cache directory. With the default Compose volume, this maps to `./data/danmaku-cache` on the host. |
+| `DANMAKU_DISK_CACHE_INITIAL_TTL_SECONDS` | `86400` | New danmaku disk cache entries live for 1 day by default. |
+| `DANMAKU_DISK_CACHE_REFRESH_SECONDS` | `86400` | On cache hits, entries are extended to at least now plus 1 day. This is not stacked on the previous expiry time. |
+| `VIEW_CACHE_MAX_ENTRIES` | `500` | Maximum in-memory Bilibili view cache entries. Oldest entries are evicted first. |
+| `VIDEO_URL_CACHE_MAX_ENTRIES` | `500` | Maximum in-memory video/live direct URL cache entries. Oldest entries are evicted first. |
+| `DANMAKU_CACHE_MAX_ENTRIES` | `50` | Maximum danmaku cache entries kept in memory and on disk. Oldest/least recently accessed entries are evicted first. |
+| `DASHBOARD_DANMAKU_MAX_ENTRIES` | `20` | Maximum danmaku cache cards shown on the dashboard. |
 | `NETEASE_PLAYLIST_CACHE_TTL_SECONDS` | `1800` | NetEase playlist metadata cache TTL. |
 | `NETEASE_URL_CACHE_TTL_SECONDS` | `600` | NetEase song direct URL cache TTL. |
 | `NETEASE_LEVEL` | `standard` | Default NetEase quality level. Supported values include `standard`, `exhigh`, `lossless`, `hires`, `sky`, `jyeffect`, `jymaster`. |

@@ -1,13 +1,20 @@
 import http from "node:http";
 import { createDecipheriv, createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { URL } from "node:url";
 
 const PORT = intEnv("PORT", 3000);
 const VIEW_CACHE_TTL_MS = intEnv("VIEW_CACHE_TTL_SECONDS", 1800) * 1000;
 const VIDEO_URL_CACHE_TTL_MS = intEnv("VIDEO_URL_CACHE_TTL_SECONDS", 600) * 1000;
 const DANMAKU_CACHE_TTL_MS = intEnv("DANMAKU_CACHE_TTL_SECONDS", 21600) * 1000;
+const VIEW_CACHE_MAX_ENTRIES = intEnv("VIEW_CACHE_MAX_ENTRIES", 500);
+const VIDEO_URL_CACHE_MAX_ENTRIES = intEnv("VIDEO_URL_CACHE_MAX_ENTRIES", 500);
+const DANMAKU_CACHE_MAX_ENTRIES = intEnv("DANMAKU_CACHE_MAX_ENTRIES", 50);
+const DASHBOARD_DANMAKU_MAX_ENTRIES = intEnv("DASHBOARD_DANMAKU_MAX_ENTRIES", 20);
+const DANMAKU_DISK_CACHE_DIR = process.env.DANMAKU_DISK_CACHE_DIR || "/app/data/danmaku-cache";
+const DANMAKU_DISK_CACHE_INITIAL_TTL_MS = intEnv("DANMAKU_DISK_CACHE_INITIAL_TTL_SECONDS", 86400) * 1000;
+const DANMAKU_DISK_CACHE_REFRESH_MS = intEnv("DANMAKU_DISK_CACHE_REFRESH_SECONDS", 86400) * 1000;
 const USER_AGENT = process.env.BILI_USER_AGENT ||
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36";
 const BILIBILI_COOKIE = process.env.BILIBILI_COOKIE || process.env.BILI_COOKIE || "";
@@ -18,6 +25,8 @@ const ZNNU_SIGNATURE_SECRET = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142
 const NETEASE_DEFAULT_LEVEL = normalizeNeteaseLevel(process.env.NETEASE_LEVEL || "standard");
 const NETEASE_PLAYLIST_CACHE_TTL_MS = intEnv("NETEASE_PLAYLIST_CACHE_TTL_SECONDS", 1800) * 1000;
 const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 1000;
+const NETEASE_PLAYLIST_CACHE_MAX_ENTRIES = intEnv("NETEASE_PLAYLIST_CACHE_MAX_ENTRIES", 100);
+const NETEASE_URL_CACHE_MAX_ENTRIES = intEnv("NETEASE_URL_CACHE_MAX_ENTRIES", 500);
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
@@ -475,7 +484,7 @@ async function resolveNeteaseUrl(input) {
 }
 
 async function getNeteasePlaylist(input) {
-  return getSimpleCached(neteasePlaylistCache, `netease-playlist:${input.playlistId}`, NETEASE_PLAYLIST_CACHE_TTL_MS, async () => {
+  return getSimpleCached(neteasePlaylistCache, `netease-playlist:${input.playlistId}`, NETEASE_PLAYLIST_CACHE_TTL_MS, NETEASE_PLAYLIST_CACHE_MAX_ENTRIES, async () => {
     const ip = await getZnnuIp();
     const decoded = await postZnnuForm("/api/playlist", {
       act: "playlist",
@@ -500,7 +509,7 @@ async function getNeteasePlaylist(input) {
 
 async function getNeteaseSongDirect(input) {
   const level = normalizeNeteaseLevel(input.level || NETEASE_DEFAULT_LEVEL);
-  return getSimpleCached(neteaseUrlCache, `netease-song:${input.songId}:${level}`, NETEASE_URL_CACHE_TTL_MS, async () => {
+  return getSimpleCached(neteaseUrlCache, `netease-song:${input.songId}:${level}`, NETEASE_URL_CACHE_TTL_MS, NETEASE_URL_CACHE_MAX_ENTRIES, async () => {
     const ip = await getZnnuIp();
     const decoded = await postZnnuForm("/api/song", {
       act: "song",
@@ -650,16 +659,18 @@ function decodeZnnuResponse(json, keyBase64) {
   return { ...json, data: JSON.parse(decrypted) };
 }
 
-async function getSimpleCached(map, key, ttlMs, loader) {
+async function getSimpleCached(map, key, ttlMs, maxEntries, loader) {
   const cached = map.get(key);
   if (cached && Date.now() - cached.time < ttlMs) return cached.value;
+  if (cached) map.delete(key);
 
   return singleflight(key, async () => {
     const current = map.get(key);
     if (current && Date.now() - current.time < ttlMs) return current.value;
+    if (current) map.delete(key);
 
     const value = await loader();
-    map.set(key, { time: Date.now(), value });
+    setCacheEntry(map, key, value, maxEntries);
     return value;
   });
 }
@@ -778,7 +789,7 @@ function unwrapKnownPlayerUrl(value) {
 
 async function getVideoView(input) {
   const key = input.bvid ? `bvid:${normalizeBvid(input.bvid)}` : `aid:${input.aid}`;
-  return getCached(viewCache, `view:${key}`, VIEW_CACHE_TTL_MS, cacheStats.view, async () => {
+  return getCached(viewCache, `view:${key}`, VIEW_CACHE_TTL_MS, cacheStats.view, VIEW_CACHE_MAX_ENTRIES, async () => {
     const url = new URL("https://api.bilibili.com/x/web-interface/view");
     if (input.bvid) url.searchParams.set("bvid", normalizeBvid(input.bvid));
     else url.searchParams.set("aid", String(input.aid));
@@ -821,7 +832,7 @@ async function resolveVideoUrl(input) {
   const key = `${view.bvid || input.bvid || `av${view.aid || input.aid}`}:${selected.cid}`;
 
   const cached = videoUrlCache.get(`video:${key}`);
-  const result = await getCached(videoUrlCache, `video:${key}`, VIDEO_URL_CACHE_TTL_MS, cacheStats.video, async () => {
+  const result = await getCached(videoUrlCache, `video:${key}`, VIDEO_URL_CACHE_TTL_MS, cacheStats.video, VIDEO_URL_CACHE_MAX_ENTRIES, async () => {
     const videoUrl = await fetchMp4Durl({
       aid: view.aid || input.aid,
       bvid: view.bvid || input.bvid || "",
@@ -875,7 +886,7 @@ async function fetchMp4Durl({ aid, bvid, cid }) {
 async function resolveLiveUrl(input) {
   const key = `live:${input.roomId}`;
   const cached = videoUrlCache.get(key);
-  const result = await getCached(videoUrlCache, key, VIDEO_URL_CACHE_TTL_MS, cacheStats.video, async () => {
+  const result = await getCached(videoUrlCache, key, VIDEO_URL_CACHE_TTL_MS, cacheStats.video, VIDEO_URL_CACHE_MAX_ENTRIES, async () => {
     const room = await getLiveRoomInfo(input.roomId);
     if (!room || !room.room_id) {
       throw new Error("live room info not found");
@@ -1006,7 +1017,7 @@ async function getDanmakuTsv(input) {
   const selected = selectVideoPage(view, input);
   const key = `dm:${selected.cid}`;
 
-  const result = await getCached(danmakuCache, key, DANMAKU_CACHE_TTL_MS, cacheStats.danmaku, async () => {
+  return getCachedDanmaku(key, async () => {
     return buildDanmakuTsv({
       bvid: view.bvid || input.bvid || "",
       aid: view.aid || input.aid || 0,
@@ -1017,7 +1028,6 @@ async function getDanmakuTsv(input) {
       duration: selected.duration || 0
     });
   });
-  return result.value;
 }
 
 async function buildDanmakuTsv(video) {
@@ -1119,12 +1129,13 @@ function biliHeaders() {
   return headers;
 }
 
-async function getCached(map, key, ttlMs, statBucket, loader) {
+async function getCached(map, key, ttlMs, statBucket, maxEntries, loader) {
   const cached = map.get(key);
   if (cached && Date.now() - cached.time < ttlMs) {
     statBucket.hits++;
     return { value: cached.value, cacheHit: true };
   }
+  if (cached) map.delete(key);
 
   if (inflight.has(key)) {
     cacheStats.inflightHits++;
@@ -1133,11 +1144,245 @@ async function getCached(map, key, ttlMs, statBucket, loader) {
 
   statBucket.misses++;
   const promise = loader().then((value) => {
-    map.set(key, { time: Date.now(), value });
+    setCacheEntry(map, key, value, maxEntries);
     return value;
   }).finally(() => inflight.delete(key));
   inflight.set(key, promise);
   return { value: await promise, cacheHit: false };
+}
+
+async function getCachedDanmaku(key, loader) {
+  const now = Date.now();
+  const memoryEntry = getValidDanmakuMemoryEntry(key, now);
+  if (memoryEntry) {
+    cacheStats.danmaku.hits++;
+    refreshDanmakuEntry(key, memoryEntry, now);
+    return memoryEntry.value;
+  }
+
+  if (inflight.has(key)) {
+    cacheStats.inflightHits++;
+    return inflight.get(key);
+  }
+
+  const diskEntry = readDanmakuDiskEntry(key, now);
+  if (diskEntry) {
+    cacheStats.danmaku.hits++;
+    setDanmakuMemoryEntry(key, diskEntry);
+    refreshDanmakuEntry(key, diskEntry, now);
+    return diskEntry.value;
+  }
+
+  cacheStats.danmaku.misses++;
+  const promise = loader().then((value) => {
+    const createdAt = Date.now();
+    const entry = {
+      key,
+      value,
+      time: createdAt,
+      createdAt,
+      lastAccessAt: createdAt,
+      expiresAt: createdAt + DANMAKU_DISK_CACHE_INITIAL_TTL_MS
+    };
+    setDanmakuMemoryEntry(key, entry);
+    writeDanmakuDiskEntry(entry);
+    trimDanmakuDiskCache();
+    return value;
+  }).finally(() => inflight.delete(key));
+  inflight.set(key, promise);
+  return promise;
+}
+
+function getValidDanmakuMemoryEntry(key, now) {
+  const entry = danmakuCache.get(key);
+  if (!entry) return null;
+  if (!entry.expiresAt) entry.expiresAt = Number(entry.time || 0) + DANMAKU_CACHE_TTL_MS;
+  if (now >= entry.expiresAt) {
+    danmakuCache.delete(key);
+    deleteDanmakuDiskEntry(key);
+    return null;
+  }
+  return entry;
+}
+
+function setDanmakuMemoryEntry(key, entry) {
+  if (danmakuCache.has(key)) danmakuCache.delete(key);
+  danmakuCache.set(key, entry);
+  trimCache(danmakuCache, DANMAKU_CACHE_MAX_ENTRIES);
+}
+
+function refreshDanmakuEntry(key, entry, now) {
+  entry.lastAccessAt = now;
+  const nextExpiresAt = now + DANMAKU_DISK_CACHE_REFRESH_MS;
+  const shouldWrite = !entry.expiresAt || entry.expiresAt < nextExpiresAt;
+  if (shouldWrite) entry.expiresAt = nextExpiresAt;
+  if (danmakuCache.has(key)) {
+    danmakuCache.delete(key);
+    danmakuCache.set(key, entry);
+    trimCache(danmakuCache, DANMAKU_CACHE_MAX_ENTRIES);
+  }
+  if (shouldWrite) writeDanmakuDiskEntry(entry);
+}
+
+function readDanmakuDiskEntry(key, now) {
+  const filePath = danmakuDiskPath(key);
+  if (!existsSync(filePath)) return null;
+  const entry = readDanmakuDiskEntryFromPath(filePath, now);
+  if (entry && entry.key === key) return entry;
+  deleteDanmakuDiskEntry(key);
+  return null;
+}
+
+function readDanmakuDiskEntryFromPath(filePath, now) {
+  try {
+    const entry = JSON.parse(readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
+    if (!entry?.key || typeof entry.value !== "string" || !Number.isFinite(Number(entry.expiresAt))) {
+      unlinkSync(filePath);
+      return null;
+    }
+    if (now >= Number(entry.expiresAt)) {
+      unlinkSync(filePath);
+      return null;
+    }
+    return {
+      key: String(entry.key),
+      value: entry.value,
+      time: Number(entry.time || entry.createdAt || now),
+      createdAt: Number(entry.createdAt || entry.time || now),
+      lastAccessAt: Number(entry.lastAccessAt || entry.time || now),
+      expiresAt: Number(entry.expiresAt)
+    };
+  } catch {
+    try {
+      unlinkSync(filePath);
+    } catch {
+      // Best-effort cleanup.
+    }
+    return null;
+  }
+}
+
+function writeDanmakuDiskEntry(entry) {
+  try {
+    mkdirSync(DANMAKU_DISK_CACHE_DIR, { recursive: true });
+    const filePath = danmakuDiskPath(entry.key);
+    const tmpFile = `${filePath}.tmp`;
+    writeFileSync(tmpFile, `${JSON.stringify({
+      key: entry.key,
+      time: entry.time,
+      createdAt: entry.createdAt,
+      lastAccessAt: entry.lastAccessAt,
+      expiresAt: entry.expiresAt,
+      value: entry.value
+    })}\n`, "utf8");
+    renameSync(tmpFile, filePath);
+  } catch (error) {
+    console.warn(`[danmaku-cache] write failed: ${error.message}`);
+  }
+}
+
+function deleteDanmakuDiskEntry(key) {
+  try {
+    const filePath = danmakuDiskPath(key);
+    if (existsSync(filePath)) unlinkSync(filePath);
+  } catch {
+    // Best-effort cache cleanup.
+  }
+}
+
+function trimDanmakuDiskCache() {
+  const limit = Math.max(0, Number(DANMAKU_CACHE_MAX_ENTRIES || 0));
+  if (!limit || !existsSync(DANMAKU_DISK_CACHE_DIR)) return;
+  try {
+    const now = Date.now();
+    const entries = readdirSync(DANMAKU_DISK_CACHE_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => {
+        const filePath = join(DANMAKU_DISK_CACHE_DIR, name);
+        try {
+          const entry = JSON.parse(readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
+          if (!entry?.key || now >= Number(entry.expiresAt || 0)) {
+            unlinkSync(filePath);
+            return null;
+          }
+          return { filePath, lastAccessAt: Number(entry.lastAccessAt || entry.time || 0) };
+        } catch {
+          unlinkSync(filePath);
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.lastAccessAt - right.lastAccessAt);
+    while (entries.length > limit) {
+      const oldest = entries.shift();
+      if (oldest) unlinkSync(oldest.filePath);
+    }
+  } catch (error) {
+    console.warn(`[danmaku-cache] trim failed: ${error.message}`);
+  }
+}
+
+function danmakuDiskPath(key) {
+  return join(DANMAKU_DISK_CACHE_DIR, `${safeCacheFileName(key)}.json`);
+}
+
+function safeCacheFileName(value) {
+  return String(value || "").replace(/[^0-9A-Za-z_.-]/g, "_").slice(0, 120);
+}
+
+function setCacheEntry(map, key, value, maxEntries) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, { time: Date.now(), value });
+  trimCache(map, maxEntries);
+}
+
+function trimCache(map, maxEntries) {
+  const limit = Math.max(0, Number(maxEntries || 0));
+  if (!limit) return;
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function pruneExpiredCache(map, ttlMs) {
+  const now = Date.now();
+  for (const [key, entry] of map.entries()) {
+    const expiresAt = Number(entry?.expiresAt || 0);
+    if (!entry || (expiresAt ? now >= expiresAt : now - entry.time >= ttlMs)) {
+      map.delete(key);
+      if (map === danmakuCache) deleteDanmakuDiskEntry(key);
+    }
+  }
+}
+
+function pruneAllExpiredCaches() {
+  pruneExpiredCache(viewCache, VIEW_CACHE_TTL_MS);
+  pruneExpiredCache(videoUrlCache, VIDEO_URL_CACHE_TTL_MS);
+  syncDanmakuMemoryFromDisk();
+  pruneExpiredCache(danmakuCache, DANMAKU_CACHE_TTL_MS);
+  trimDanmakuDiskCache();
+  pruneExpiredCache(neteasePlaylistCache, NETEASE_PLAYLIST_CACHE_TTL_MS);
+  pruneExpiredCache(neteaseUrlCache, NETEASE_URL_CACHE_TTL_MS);
+}
+
+function syncDanmakuMemoryFromDisk() {
+  if (!existsSync(DANMAKU_DISK_CACHE_DIR)) return;
+  const now = Date.now();
+  try {
+    const entries = readdirSync(DANMAKU_DISK_CACHE_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => readDanmakuDiskEntryFromPath(join(DANMAKU_DISK_CACHE_DIR, name), now))
+      .filter(Boolean)
+      .sort((left, right) => right.lastAccessAt - left.lastAccessAt)
+      .slice(0, DANMAKU_CACHE_MAX_ENTRIES);
+    for (const entry of entries.reverse()) {
+      if (!danmakuCache.has(entry.key)) setDanmakuMemoryEntry(entry.key, entry);
+    }
+  } catch (error) {
+    console.warn(`[danmaku-cache] sync failed: ${error.message}`);
+  }
 }
 
 async function singleflight(key, loader) {
@@ -1305,6 +1550,7 @@ class ProtoReader {
 }
 
 function buildCacheStats() {
+  pruneAllExpiredCaches();
   const now = Date.now();
   return {
     caches: {
@@ -1327,7 +1573,16 @@ function buildCacheStats() {
     ttlSeconds: {
       view: Math.floor(VIEW_CACHE_TTL_MS / 1000),
       videoUrl: Math.floor(VIDEO_URL_CACHE_TTL_MS / 1000),
-      danmaku: Math.floor(DANMAKU_CACHE_TTL_MS / 1000)
+      danmakuMemoryFallback: Math.floor(DANMAKU_CACHE_TTL_MS / 1000),
+      danmakuDiskInitial: Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000),
+      danmakuDiskRefresh: Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)
+    },
+    limits: {
+      view: VIEW_CACHE_MAX_ENTRIES,
+      videoUrl: VIDEO_URL_CACHE_MAX_ENTRIES,
+      danmaku: DANMAKU_CACHE_MAX_ENTRIES,
+      dashboardDanmaku: DASHBOARD_DANMAKU_MAX_ENTRIES,
+      danmakuDiskDir: DANMAKU_DISK_CACHE_DIR
     },
     requests: {
       playerRedirects: stats.playerRedirects,
@@ -1352,17 +1607,24 @@ function buildCacheStats() {
         part: headerValue(text, "part"),
         count: getDanmakuCount(text),
         ageSeconds: Math.floor((now - entry.time) / 1000),
-        expiresInSeconds: Math.max(0, Math.floor((DANMAKU_CACHE_TTL_MS - (now - entry.time)) / 1000))
+        expiresInSeconds: Math.max(0, Math.floor((Number(entry.expiresAt || 0) - now) / 1000)),
+        lastAccessAgeSeconds: Math.floor((now - Number(entry.lastAccessAt || entry.time)) / 1000)
       };
     })
   };
 }
 
 function renderDashboard() {
+  pruneAllExpiredCaches();
   const uptimeSeconds = Math.floor((Date.now() - stats.startedAt) / 1000);
   const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects - stats.liveRedirects);
-  const cards = [...danmakuCache.entries()].map(([key, entry]) => {
+  const danmakuEntries = [...danmakuCache.entries()]
+    .sort((left, right) => right[1].time - left[1].time);
+  const hiddenDanmakuEntries = Math.max(0, danmakuEntries.length - DASHBOARD_DANMAKU_MAX_ENTRIES);
+  const cards = danmakuEntries.slice(0, DASHBOARD_DANMAKU_MAX_ENTRIES).map(([key, entry]) => {
     const text = entry.value || "";
+    const expiresIn = Math.max(0, Math.floor((Number(entry.expiresAt || 0) - Date.now()) / 1000));
+    const lastAccessAge = Math.max(0, Math.floor((Date.now() - Number(entry.lastAccessAt || entry.time)) / 1000));
     return `
           <article class="cache-card">
             <p class="eyebrow">&#24377;&#24149;&#32531;&#23384;</p>
@@ -1372,9 +1634,14 @@ function renderDashboard() {
               <div><dt>CID</dt><dd>${escapeHtml(headerValue(text, "cid") || "-")}</dd></div>
               <div><dt>&#39029;&#30721;</dt><dd>${escapeHtml(headerValue(text, "page") || "1")}</dd></div>
               <div><dt>&#24377;&#24149;&#25968;</dt><dd>${formatNumber(getDanmakuCount(text))}</dd></div>
+              <div><dt>&#21097;&#20313;</dt><dd>${escapeHtml(formatDuration(expiresIn))}</dd></div>
+              <div><dt>&#26368;&#36817;&#35775;&#38382;</dt><dd>${escapeHtml(formatDuration(lastAccessAge))}&#21069;</dd></div>
             </dl>
           </article>`;
   }).join("");
+  const cacheSummary = hiddenDanmakuEntries > 0
+    ? `<p class="subtle">&#24050;&#38544;&#34255; ${formatNumber(hiddenDanmakuEntries)} &#26465;&#26356;&#26087;&#30340;&#24377;&#24149;&#32531;&#23384;&#65292;&#20027;&#39029;&#20165;&#26174;&#31034;&#26368;&#36817; ${formatNumber(DASHBOARD_DANMAKU_MAX_ENTRIES)} &#26465;&#12290;</p>`
+    : "";
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -1448,6 +1715,8 @@ function renderDashboard() {
         <code>&#36816;&#34892;&#26102;&#38271;&#65306;${escapeHtml(formatDuration(uptimeSeconds))}</code>
         <code>&#21551;&#21160;&#26102;&#38388;&#65306;${escapeHtml(formatDateTime(stats.startedAt))}</code>
         <code>view/video/danmaku cache: ${viewCache.size}/${videoUrlCache.size}/${danmakuCache.size}</code>
+        <code>cache limits: ${VIEW_CACHE_MAX_ENTRIES}/${VIDEO_URL_CACHE_MAX_ENTRIES}/${DANMAKU_CACHE_MAX_ENTRIES}, dashboard: ${DASHBOARD_DANMAKU_MAX_ENTRIES}</code>
+        <code>danmaku disk cache: initial ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000)))}, refresh ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)))}</code>
         <code>inflight: ${inflight.size}</code>
         <code>NetEase song/playlist: ${formatNumber(stats.neteaseSongRedirects)}/${formatNumber(stats.neteasePlaylistRedirects)}</code>
         <code>/api/resolve: ${stats.resolveRequests}</code>
@@ -1460,6 +1729,7 @@ function renderDashboard() {
     </section>
     <section class="panel">
       <h2>&#24377;&#24149;&#32531;&#23384;</h2>
+      ${cacheSummary}
       <div class="cache-list">${cards || `<div class="empty">&#26242;&#26080;&#24377;&#24149;&#32531;&#23384;</div>`}</div>
     </section>
     <section class="panel">

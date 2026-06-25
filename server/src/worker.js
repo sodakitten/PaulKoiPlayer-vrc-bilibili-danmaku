@@ -26,6 +26,7 @@ export default {
 async function handlePlayer(request, env, ctx, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) return text("missing url\n", 400);
+  if (isBilibiliLikeSource(source)) return await proxyToDocker(request, env, requestUrl);
 
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const liveInput = await parseLiveInput(source, env, ctx);
@@ -61,6 +62,10 @@ async function handlePlayer(request, env, ctx, requestUrl) {
 }
 
 async function handleApiDanmaku(request, env, ctx, requestUrl) {
+  return await proxyToDocker(request, env, requestUrl);
+}
+
+async function handleApiDanmakuLocal(request, env, ctx, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = source ? await parseInputUrl(source, env, ctx, forcedPage) : {
@@ -77,6 +82,7 @@ async function handleApiDanmaku(request, env, ctx, requestUrl) {
 async function handleResolve(_request, env, ctx, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) return json({ error: "missing url" }, 400);
+  if (isBilibiliLikeSource(source)) return await proxyToDocker(_request, env, requestUrl);
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const liveInput = await parseLiveInput(source, env, ctx);
   if (liveInput) {
@@ -691,6 +697,7 @@ function buildWorkerStats(env) {
   return {
     runtime: "cloudflare-workers",
     cache: "Cache API with per-isolate memory fallback",
+    bilibiliOrigin: getDockerOrigin(env),
     persistentCounters: false,
     ttlSeconds: {
       view: intEnv(env, "VIEW_CACHE_TTL_SECONDS", 1800),
@@ -701,6 +708,55 @@ function buildWorkerStats(env) {
     },
     memoryEntries: memoryCache.size
   };
+}
+
+async function proxyToDocker(request, env, requestUrl) {
+  const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, getDockerOrigin(env));
+  const headers = new Headers();
+  for (const name of ["accept", "accept-language", "content-type", "range", "user-agent"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  const cfIp = request.headers.get("cf-connecting-ip");
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (cfIp) headers.set("CF-Connecting-IP", cfIp);
+  if (forwardedFor || cfIp) headers.set("X-Forwarded-For", forwardedFor || cfIp);
+  headers.set("X-Worker-Proxy", "paulkoi-danmaku-worker");
+
+  const response = await fetch(target, {
+    method: request.method,
+    headers,
+    redirect: "manual"
+  });
+  return withCors(response);
+}
+
+function isBilibiliLikeSource(value) {
+  const decoded = decodeRepeatedly(value);
+  const unwrapped = unwrapKnownPlayerUrl(decoded);
+  const candidates = [value, decoded, unwrapped, decodeRepeatedly(unwrapped)];
+  return candidates.some((candidate) => {
+    const textValue = String(candidate || "");
+    if (/BV[0-9A-Za-z]{10,}/i.test(textValue) || /(?:^|[?&/])av\d+/i.test(textValue)) return true;
+    const parsed = tryParseFlexibleUrl(textValue);
+    if (!parsed) return false;
+    const host = normalizeHost(parsed.hostname);
+    return host === "bilibili.com" ||
+      host.endsWith(".bilibili.com") ||
+      host === "b23.tv" ||
+      host === "bili2233.cn";
+  });
+}
+
+function getDockerOrigin(env) {
+  return normalizeOrigin(getEnv(env, "BILI_DOCKER_ORIGIN", "https://danmaku.paulkoishi.com"));
+}
+
+function normalizeOrigin(value) {
+  const fallback = "https://danmaku.paulkoishi.com";
+  const parsed = tryParseUrl(String(value || "").trim());
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) return fallback;
+  return parsed.origin;
 }
 
 function renderHome(env) {

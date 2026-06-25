@@ -2,7 +2,7 @@ services:
   paulkoi-danmaku-server:
     build:
       context: .
-    image: paulkoi-danmaku-server:1.0.0
+    image: paulkoi-danmaku-server:1.0.3
     container_name: paulkoi-danmaku-server
     restart: unless-stopped
     ports:
@@ -16,6 +16,13 @@ services:
       VIEW_CACHE_TTL_SECONDS: "1800"
       VIDEO_URL_CACHE_TTL_SECONDS: "600"
       DANMAKU_CACHE_TTL_SECONDS: "21600"
+      DANMAKU_DISK_CACHE_DIR: "/app/data/danmaku-cache"
+      DANMAKU_DISK_CACHE_INITIAL_TTL_SECONDS: "86400"
+      DANMAKU_DISK_CACHE_REFRESH_SECONDS: "86400"
+      VIEW_CACHE_MAX_ENTRIES: "500"
+      VIDEO_URL_CACHE_MAX_ENTRIES: "500"
+      DANMAKU_CACHE_MAX_ENTRIES: "50"
+      DASHBOARD_DANMAKU_MAX_ENTRIES: "20"
       STATS_FILE: "/app/data/stats.json"
       # Optional. Uncomment when anonymous Bilibili danmaku is incomplete.
       # BILI_COOKIE: "SESSDATA=...; bili_jct=..."
