@@ -1,21 +1,22 @@
-using TMPro;
+﻿using TMPro;
 using UdonSharp;
 using UnityEngine;
 using VRC.SDK3.StringLoading;
 using VRC.SDKBase;
 using VRC.Udon.Common.Interfaces;
-using Yamadev.YamaStream;
+using HoshinoLabs.IwaSync3.Udon;
+using VRC.SDK3.Components.Video;
 
-namespace YamaBiliDanmakuV3
+namespace IwaBiliDanmakuV3
 {
   [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
-  public class YamaBiliDanmakuModule3 : UdonSharpBehaviour
+  public class IwaBiliDanmakuModule3 : VideoCoreEventListener
   {
-    [Header("YamaPlayer")]
-    [SerializeField] private Controller _controller;
+    [Header("iwaSync3")]
+    [SerializeField] private VideoCore _core;
 
     [Header("Loading")]
-    [SerializeField] private bool _loadFromCurrentYamaPlayerUrl = true;
+    [SerializeField] private bool _loadFromCurrentIwaSyncUrl = true;
     [SerializeField] private VRCUrl _fallbackDanmakuUrl = VRCUrl.Empty;
     [SerializeField] private TextMeshProUGUI _statusText;
     [SerializeField] private TextMeshProUGUI _displayAreaButtonLabel;
@@ -24,14 +25,14 @@ namespace YamaBiliDanmakuV3
     [SerializeField, Range(0f, 10f)] private float _statusVisibleSeconds = 2f;
 
     [Header("URL Fill")]
-    [SerializeField] private YamaBiliUrlPrefixHelper3 _urlPrefixHelper;
+    [SerializeField] private IwaBiliUrlPrefixHelper3 _urlPrefixHelper;
     [SerializeField] private bool _urlPrefixFillEnabled = true;
 
     [Header("Renderer")]
     [SerializeField] private RectTransform _laneRoot;
     [SerializeField] private TextMeshProUGUI[] _textPool = new TextMeshProUGUI[0];
     [SerializeField, Range(1, 32)] private int _laneCount = 12;
-    [SerializeField, Range(12f, 80f)] private float _lineHeight = 34f;
+    [SerializeField, Range(12f, 160f)] private float _lineHeight = 92f;
     [SerializeField, Range(4f, 16f)] private float _scrollDuration = 8f;
     [SerializeField, Range(1f, 8f)] private float _staticDuration = 4f;
     [SerializeField] private bool _dropDanmakuWhenLanesAreFull = true;
@@ -44,13 +45,16 @@ namespace YamaBiliDanmakuV3
     [SerializeField, Range(0, 2)] private int _displayAreaMode = 0;
 
     [Header("Appearance")]
+    [SerializeField, Range(12f, 120f)] private float _baseFontSize = 52f;
     [SerializeField, Range(0.1f, 3f)] private float _fontScale = 1.1f;
+    [SerializeField, Range(1f, 3f)] private float _lineSpacing = 1.35f;
+    [SerializeField, Range(16f, 80f)] private float _characterWidth = 48f;
     [Tooltip("Danmaku text opacity. 1 is fully opaque, 0 is invisible.")]
     [SerializeField, Range(0f, 1f)] private float _textAlpha = 0.72f;
     [SerializeField] private bool _danmakuEnabled = true;
 
     [Header("Editor Visual Style")]
-    [Tooltip("Editor-applied style only. Run Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style after changing this on an existing module.")]
+    [Tooltip("Editor-applied style only. Run PaulKoiPlayer > iwaSync3 > Apply Selected Bili Danmaku Visual Style after changing this on an existing module.")]
     [SerializeField] private bool _editorBoldText = true;
     [SerializeField] private bool _editorHeavyOutlineEnabled = true;
     [SerializeField, Range(0f, 0.5f)] private float _editorOutlineWidth = 0.11f;
@@ -86,9 +90,14 @@ namespace YamaBiliDanmakuV3
 
     private void Start()
     {
-      if (!Utilities.IsValid(_controller))
+      if (!Utilities.IsValid(_core))
       {
-        _controller = FindControllerInParents();
+        _core = FindCoreInParents();
+      }
+
+      if (Utilities.IsValid(_core))
+      {
+        _core.AddListener(this);
       }
 
       InitializePool();
@@ -101,9 +110,9 @@ namespace YamaBiliDanmakuV3
     private void Update()
     {
       UpdateStatusVisibility();
-      if (!Utilities.IsValid(_controller)) return;
+      if (!Utilities.IsValid(_core)) return;
 
-      if (_controller.Stopped)
+      if (!HasCurrentIwaSyncUrl())
       {
         if (_loaded || _lineCount > 0 || _requestedForPlayback) ResetDanmaku();
         return;
@@ -115,7 +124,7 @@ namespace YamaBiliDanmakuV3
         LoadCurrentTrackDanmaku();
       }
 
-      if (_controller.Paused)
+      if (_core.paused)
       {
         if (!_wasPaused)
         {
@@ -133,9 +142,9 @@ namespace YamaBiliDanmakuV3
 
       UpdateActiveTexts();
 
-      if (!_loaded || !Utilities.IsValid(_controller) || _controller.Stopped || _controller.IsLive) return;
+      if (!_loaded || !Utilities.IsValid(_core) || !_core.isPlaying || _core.isLive) return;
 
-      int videoMs = Mathf.RoundToInt(_controller.VideoTime * 1000f) + _timeOffsetMs;
+      int videoMs = Mathf.RoundToInt(_core.time * 1000f) + _timeOffsetMs;
       if (_lastVideoMs >= 0 && Mathf.Abs(videoMs - _lastVideoMs) > 1800)
       {
         SeekLineIndex(videoMs);
@@ -155,13 +164,13 @@ namespace YamaBiliDanmakuV3
 
     public void LoadCurrentTrackDanmaku()
     {
-      if (!_loadFromCurrentYamaPlayerUrl)
+      if (!_loadFromCurrentIwaSyncUrl)
       {
         LoadFallbackDanmaku();
         return;
       }
 
-      VRCUrl currentUrl = GetCurrentYamaPlayerUrl();
+      VRCUrl currentUrl = GetCurrentIwaSyncUrl();
       if (VRCUrl.IsNullOrEmpty(currentUrl))
       {
         SetStatus("no current url");
@@ -283,8 +292,8 @@ namespace YamaBiliDanmakuV3
       string body = ExtractDanmakuBlock(result.Result);
       if (string.IsNullOrEmpty(body))
       {
-        if (TryLoadFallbackAfterCurrentUrl("no #YBDM block")) return;
-        SetStatus("no #YBDM block");
+        if (TryLoadFallbackAfterCurrentUrl("no danmaku block")) return;
+        SetStatus("no danmaku block");
         return;
       }
 
@@ -295,6 +304,39 @@ namespace YamaBiliDanmakuV3
     {
       if (TryLoadFallbackAfterCurrentUrl("load error " + result.ErrorCode)) return;
       SetStatus("load error " + result.ErrorCode);
+    }
+
+    public override void OnChangeURL()
+    {
+      ResetDanmaku();
+      SetStatus("url changed");
+    }
+
+    public override void OnPlayerStop()
+    {
+      ResetDanmaku();
+      SetStatus("stopped");
+    }
+
+    public override void OnVideoEnd()
+    {
+      ResetDanmaku();
+      SetStatus("ended");
+    }
+
+    public override void OnVideoLoop()
+    {
+      _nextLine = 0;
+      _lastVideoMs = -1;
+      HideAllTexts();
+      ClearLaneTimers();
+      SetStatus("loop");
+    }
+
+    public override void OnVideoError(VideoError videoError)
+    {
+      ResetDanmaku();
+      SetStatus("video error " + videoError);
     }
 
     private bool TryLoadFallbackAfterCurrentUrl(string reason)
@@ -346,14 +388,16 @@ namespace YamaBiliDanmakuV3
       ClearLaneTimers();
     }
 
-    private VRCUrl GetCurrentYamaPlayerUrl()
+    private bool HasCurrentIwaSyncUrl()
     {
-      if (!Utilities.IsValid(_controller)) return VRCUrl.Empty;
+      return !VRCUrl.IsNullOrEmpty(GetCurrentIwaSyncUrl());
+    }
 
-      object currentUrl = _controller.GetProgramVariable("_url");
-      if (!Utilities.IsValid(currentUrl)) return VRCUrl.Empty;
+    private VRCUrl GetCurrentIwaSyncUrl()
+    {
+      if (!Utilities.IsValid(_core)) return VRCUrl.Empty;
 
-      VRCUrl url = (VRCUrl)currentUrl;
+      VRCUrl url = _core.url;
       if (!VRCUrl.IsNullOrEmpty(url)) return url;
 
       return VRCUrl.Empty;
@@ -422,17 +466,18 @@ namespace YamaBiliDanmakuV3
 
       float rootWidth = Mathf.Max(1f, _laneRoot.rect.width);
       float rootHeight = Mathf.Max(1f, _laneRoot.rect.height);
+      float lineHeight = GetRuntimeLineHeight(visualScale);
       float areaFactor = GetDisplayAreaHeightFactor();
-      float areaHeight = Mathf.Max(_lineHeight, rootHeight * areaFactor);
+      float areaHeight = Mathf.Max(lineHeight, rootHeight * areaFactor);
       float areaTop = rootHeight * 0.5f;
       float areaBottom = areaTop - areaHeight;
-      int lane = SelectLane(GetEffectiveLaneCount(areaHeight));
+      int lane = SelectLane(GetEffectiveLaneCount(areaHeight, lineHeight));
       if (lane < 0) return;
       int contentLength = string.IsNullOrEmpty(_content[index]) ? 1 : _content[index].Length;
-      float textWidth = Mathf.Max(120f, contentLength * 36f * visualScale + 96f);
+      float textWidth = Mathf.Max(120f, contentLength * Mathf.Max(16f, _characterWidth) * visualScale + 96f);
       float y = isBottom
-        ? areaBottom + _lineHeight * (lane + 0.5f)
-        : areaTop - _lineHeight * (lane + 0.5f);
+        ? areaBottom + lineHeight * (lane + 0.5f)
+        : areaTop - lineHeight * (lane + 0.5f);
 
       _poolActive[poolIndex] = true;
       AddActivePoolIndex(poolIndex);
@@ -576,10 +621,16 @@ namespace YamaBiliDanmakuV3
       return best;
     }
 
-    private int GetEffectiveLaneCount(float areaHeight)
+    private int GetEffectiveLaneCount(float areaHeight, float lineHeight)
     {
-      int byHeight = Mathf.Max(1, Mathf.FloorToInt(areaHeight / Mathf.Max(1f, _lineHeight)));
+      int byHeight = Mathf.Max(1, Mathf.FloorToInt(areaHeight / Mathf.Max(1f, lineHeight)));
       return Mathf.Clamp(byHeight, 1, Mathf.Max(1, _laneReadyAt.Length));
+    }
+
+    private float GetRuntimeLineHeight(float visualScale)
+    {
+      float scaledFontHeight = Mathf.Max(1f, _baseFontSize) * Mathf.Max(0.1f, visualScale) * Mathf.Max(1f, _lineSpacing);
+      return Mathf.Max(_lineHeight, scaledFontHeight);
     }
 
     private float GetDisplayAreaHeightFactor()
@@ -800,16 +851,17 @@ namespace YamaBiliDanmakuV3
       }
     }
 
-    private Controller FindControllerInParents()
+    private VideoCore FindCoreInParents()
     {
       Transform current = transform;
       while (Utilities.IsValid(current))
       {
-        Controller controller = current.GetComponentInChildren<Controller>(true);
-        if (Utilities.IsValid(controller)) return controller;
+        VideoCore core = current.GetComponentInChildren<VideoCore>(true);
+        if (Utilities.IsValid(core)) return core;
         current = current.parent;
       }
       return null;
     }
   }
 }
+

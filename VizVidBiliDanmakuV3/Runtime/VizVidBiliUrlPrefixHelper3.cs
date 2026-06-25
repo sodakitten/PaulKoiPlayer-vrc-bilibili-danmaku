@@ -3,76 +3,84 @@ using UdonSharp;
 using UnityEngine;
 using VRC.SDK3.Components;
 using VRC.SDKBase;
+using JLChnToZ.VRC.VVMW;
 
-namespace YamaBiliDanmakuV3
+namespace VizVidBiliDanmakuV3
 {
   [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
-  public class YamaBiliUrlPrefixHelper3 : UdonSharpBehaviour
+  public class VizVidBiliUrlPrefixHelper3 : UdonSharpBehaviour
   {
-    [Header("YamaPlayer URL Inputs")]
-    [SerializeField] private VRCUrlInputField _topUrlInputField;
-    [SerializeField] private VRCUrlInputField _bottomUrlInputField;
+    [Header("VizVid URL Input")]
+    [SerializeField] private Core _core;
+    [SerializeField] private VRCUrlInputField _addressUrlInputField;
 
     [Header("Prefix")]
     [SerializeField] private bool _enableUrlPrefixOnInput = true;
     [SerializeField] private TextMeshProUGUI _urlPrefixToggleButtonLabel;
-    [Tooltip("Prefix inserted into an empty YamaPlayer URL field. Change this when moving to another domain.")]
+    [Tooltip("Prefix inserted into an empty VizVid URL field. Change this when moving to another domain.")]
     [SerializeField] private VRCUrl _urlPrefix = VRCUrl.Empty;
     [Tooltip("When enabled, empty URL fields are refilled periodically. Leave this off if players should be able to delete the prefix manually.")]
     [SerializeField] private bool _keepPrefixWhenEmpty = false;
     [SerializeField, Range(0.5f, 10f)] private float _refreshSeconds = 3f;
     [SerializeField, Range(0.1f, 2f)] private float _inputWatchSeconds = 0.25f;
 
-    private bool _topInputWasActive;
-    private bool _bottomInputWasActive;
-    private bool _topInputWasEmpty;
-    private bool _bottomInputWasEmpty;
+    private bool _inputWasActive;
+    private bool _inputWasEmpty;
 
     private void Start()
     {
-      _topInputWasActive = false;
-      _bottomInputWasActive = false;
-      _topInputWasEmpty = true;
-      _bottomInputWasEmpty = true;
+      _inputWasActive = false;
+      _inputWasEmpty = true;
       UpdateUrlPrefixToggleButtonLabel();
-      if (_enableUrlPrefixOnInput) SendCustomEventDelayedSeconds(nameof(WatchInputFields), _inputWatchSeconds);
+      if (Utilities.IsValid(_core))
+      {
+        _core._AddListener(this, "_onVideoEnd");
+      }
+      if (_enableUrlPrefixOnInput) SendCustomEventDelayedSeconds(nameof(WatchInputField), _inputWatchSeconds);
       if (_keepPrefixWhenEmpty) SendCustomEventDelayedSeconds(nameof(RefreshLoop), _refreshSeconds);
     }
 
-    public void WatchInputFields()
+    public void WatchInputField()
     {
       if (!_enableUrlPrefixOnInput) return;
 
-      WatchInputField(_topUrlInputField, true);
-      WatchInputField(_bottomUrlInputField, false);
+      bool active = IsInputActive(_addressUrlInputField);
+      bool empty = IsInputEmpty(_addressUrlInputField);
+      if (active && (!_inputWasActive || (!_inputWasEmpty && empty)))
+      {
+        ApplyPrefixToEmptyField();
+        empty = IsInputEmpty(_addressUrlInputField);
+      }
 
-      SendCustomEventDelayedSeconds(nameof(WatchInputFields), _inputWatchSeconds);
+      _inputWasActive = active;
+      _inputWasEmpty = empty;
+      SendCustomEventDelayedSeconds(nameof(WatchInputField), _inputWatchSeconds);
     }
 
     public void RefreshLoop()
     {
       if (!_keepPrefixWhenEmpty) return;
-      ApplyPrefixToEmptyFields();
+      ApplyPrefixToEmptyField();
       SendCustomEventDelayedSeconds(nameof(RefreshLoop), _refreshSeconds);
     }
 
-    public void ApplyPrefixToEmptyFields()
+    public void ApplyPrefixToEmptyField()
     {
       if (!_enableUrlPrefixOnInput) return;
-      ApplyPrefixToEmptyField(_topUrlInputField);
-      ApplyPrefixToEmptyField(_bottomUrlInputField);
+      if (IsVizVidBusy()) return;
+      ApplyPrefixToEmptyFieldNow();
     }
 
-    public void ApplyPrefixToTopInput()
+    public void ApplyPrefixToEmptyFieldNow()
     {
       if (!_enableUrlPrefixOnInput) return;
-      ApplyPrefixToEmptyField(_topUrlInputField);
-    }
+      if (!Utilities.IsValid(_addressUrlInputField) || VRCUrl.IsNullOrEmpty(_urlPrefix) || string.IsNullOrEmpty(_urlPrefix.Get())) return;
 
-    public void ApplyPrefixToBottomInput()
-    {
-      if (!_enableUrlPrefixOnInput) return;
-      ApplyPrefixToEmptyField(_bottomUrlInputField);
+      VRCUrl currentUrl = _addressUrlInputField.GetUrl();
+      if (VRCUrl.IsNullOrEmpty(currentUrl) || string.IsNullOrEmpty(currentUrl.Get()))
+      {
+        _addressUrlInputField.SetUrl(_urlPrefix);
+      }
     }
 
     public void SetEnableUrlPrefixOnInput(bool enableUrlPrefixOnInput)
@@ -81,13 +89,12 @@ namespace YamaBiliDanmakuV3
       UpdateUrlPrefixToggleButtonLabel();
       if (_enableUrlPrefixOnInput)
       {
-        ApplyPrefixToEmptyFields();
-        SendCustomEventDelayedSeconds(nameof(WatchInputFields), _inputWatchSeconds);
+        ApplyPrefixToEmptyField();
+        SendCustomEventDelayedSeconds(nameof(WatchInputField), _inputWatchSeconds);
       }
       else
       {
-        ClearPrefixIfOnlyPrefix(_topUrlInputField);
-        ClearPrefixIfOnlyPrefix(_bottomUrlInputField);
+        ClearPrefixIfOnlyPrefix();
       }
     }
 
@@ -109,7 +116,7 @@ namespace YamaBiliDanmakuV3
     public void SetUrlPrefix(VRCUrl urlPrefix)
     {
       _urlPrefix = urlPrefix;
-      ApplyPrefixToEmptyFields();
+      ApplyPrefixToEmptyField();
     }
 
     public void SetKeepPrefixWhenEmpty(bool keepPrefixWhenEmpty)
@@ -118,46 +125,15 @@ namespace YamaBiliDanmakuV3
       if (_keepPrefixWhenEmpty) SendCustomEventDelayedSeconds(nameof(RefreshLoop), _refreshSeconds);
     }
 
-    private void ApplyPrefixToEmptyField(VRCUrlInputField inputField)
+    public void _onVideoEnd()
     {
       if (!_enableUrlPrefixOnInput) return;
-      if (!Utilities.IsValid(inputField) || VRCUrl.IsNullOrEmpty(_urlPrefix) || string.IsNullOrEmpty(_urlPrefix.Get())) return;
-
-      VRCUrl currentUrl = inputField.GetUrl();
-      if (VRCUrl.IsNullOrEmpty(currentUrl) || string.IsNullOrEmpty(currentUrl.Get()))
-      {
-        inputField.SetUrl(_urlPrefix);
-      }
+      SendCustomEventDelayedSeconds(nameof(ApplyPrefixToEmptyFieldNow), 0.25f);
     }
 
     private bool IsInputActive(VRCUrlInputField inputField)
     {
       return Utilities.IsValid(inputField) && inputField.gameObject.activeInHierarchy;
-    }
-
-    private void WatchInputField(VRCUrlInputField inputField, bool isTop)
-    {
-      bool active = IsInputActive(inputField);
-      bool empty = IsInputEmpty(inputField);
-      bool wasActive = isTop ? _topInputWasActive : _bottomInputWasActive;
-      bool wasEmpty = isTop ? _topInputWasEmpty : _bottomInputWasEmpty;
-
-      if (active && (!wasActive || (!wasEmpty && empty)))
-      {
-        ApplyPrefixToEmptyField(inputField);
-        empty = IsInputEmpty(inputField);
-      }
-
-      if (isTop)
-      {
-        _topInputWasActive = active;
-        _topInputWasEmpty = empty;
-      }
-      else
-      {
-        _bottomInputWasActive = active;
-        _bottomInputWasEmpty = empty;
-      }
     }
 
     private bool IsInputEmpty(VRCUrlInputField inputField)
@@ -168,18 +144,27 @@ namespace YamaBiliDanmakuV3
       return VRCUrl.IsNullOrEmpty(currentUrl) || string.IsNullOrEmpty(currentUrl.Get());
     }
 
-    private void ClearPrefixIfOnlyPrefix(VRCUrlInputField inputField)
+    private bool IsVizVidBusy()
     {
-      if (!Utilities.IsValid(inputField) || VRCUrl.IsNullOrEmpty(_urlPrefix)) return;
+      if (!Utilities.IsValid(_core)) return false;
+      if (_core.IsLoading || _core.IsPlaying || _core.IsPaused) return true;
 
-      VRCUrl currentUrl = inputField.GetUrl();
+      VRCUrl currentUrl = _core.Url;
+      return !VRCUrl.IsNullOrEmpty(currentUrl) && !string.IsNullOrEmpty(currentUrl.Get());
+    }
+
+    private void ClearPrefixIfOnlyPrefix()
+    {
+      if (!Utilities.IsValid(_addressUrlInputField) || VRCUrl.IsNullOrEmpty(_urlPrefix)) return;
+
+      VRCUrl currentUrl = _addressUrlInputField.GetUrl();
       if (VRCUrl.IsNullOrEmpty(currentUrl)) return;
 
       string current = currentUrl.Get();
       string prefix = _urlPrefix.Get();
       if (string.IsNullOrEmpty(current) || current == prefix)
       {
-        inputField.SetUrl(VRCUrl.Empty);
+        _addressUrlInputField.SetUrl(VRCUrl.Empty);
       }
     }
 

@@ -409,6 +409,23 @@ vizvid1.0.zip
 
 它只包含 `VizVidBiliDanmakuV3/`，不包含 README、docs、Yama 线或 iwa 线。解压后应直接进入 package 文件夹。正式发布前仍需用户在 Unity/VRChat 中确认：编译无错误、URL 前缀可用、弹幕位置和字号合适、按钮可点、暂停/跳转/关闭再打开弹幕行为正常。
 
+### VizVid URL Fill 开关失败复盘
+
+`vizvid1.3` 到 `vizvid1.6` 试图给 VizVid 的 URL 前缀辅助增加 `URL Fill: On/Off` 第三个按钮，但这条路线被验证为不稳定，当前已回退到 `vizvid1.4` 行为作为临时基线。
+
+失败点包括：
+
+- `URL Fill: Off` 为了“当场清空前缀”调用 `VRCUrlInputField.SetUrl(VRCUrl.Empty)`，会触发 VizVid 自己监听的 URL 输入变化，从而弹出播放提示或进入播放器输入流程。
+- 改成只写 `textComponent.text = ""` 后，显示文本和 `VRCUrlInputField.GetUrl()` 的真实值不同步，导致 On/Off 状态看似切换，实际输入框和回填逻辑都不可靠。
+- 继续尝试在 On 时修补显示文本，只会让“显示值”和“真实 URL 值”之间的状态更复杂，容易出现按钮不生效、输入框不刷新或播放结束不回填。
+
+因此后续不要再把“开关状态”和“清空当前输入框”绑在一起。更稳的设计应是：
+
+- `URL Fill` 开关只控制后续是否自动回填，不在 Off 时修改 VizVid 输入框内容。
+- 如果必须清空输入框，应使用 VizVid 官方 UI 流程或明确的独立清空按钮，并验证不会触发播放提示。
+- 播放中、加载中、暂停中仍然不应回填；播放结束自动回填可以保留，但必须只在输入框为空时执行。
+- 若再次实现这个开关，应先在 Unity/VRChat 中单独验证 `VRCUrlInputField.SetUrl`、`onValueChanged`、`onEndEdit` 与 VizVid `UIHandler` 的交互，再合入测试包。
+
 ### 跨播放器线的维护规则
 
 - 播放器适配层可以不同，弹幕解析和渲染主逻辑应保持同一种行为。
@@ -449,6 +466,7 @@ vizvid1.0.zip
 - 不把 UnityEvent 直接绑定到 UdonSharp C# proxy；需要绑定 backing `UdonBehaviour`。
 - 不用 Toggle 表达 `Full/Half/1/4` 这种三态循环状态。
 - 不在切换显示区域时调用 `HideAllTexts()` 清空已有弹幕。
+- 不在 VizVid `URL Fill: Off` 时调用 `VRCUrlInputField.SetUrl(VRCUrl.Empty)` 清空输入框；这会触发 VizVid 的 URL 输入/播放提示流程。
 - 不在弹幕关闭状态下每帧重复遍历并隐藏全部对象池。
 - 不把 `_maxDanmakuLines` 降回 1600，除非重新验证高密度弹幕视频不会被截断。
 - 不使用全局 `room=main` 保存当前视频。
