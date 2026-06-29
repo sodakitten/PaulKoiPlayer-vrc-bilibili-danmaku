@@ -9,9 +9,9 @@
 - 编辑器生成器：`Editor/YamaBiliDanmakuRigBuilder3.cs`
 - 镜子可读 TMP Shader：`Shaders/YamaBiliDanmakuTMPMirrorReadable.shader`
 - Docker 服务：`server/src/server.js`
-- 公开版本：`1.04beta`（PC / 桌面端），Android / Quest 可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包
+- 公开版本：`1.04beta`（PC / 桌面端）。Android / Quest 普通播放器继续使用 `1.03`；Android / Quest 可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包
 
-后续普通播放器功能应从这个 PC 基线继续，不应从早期试验包或旧版 Package 目录回拷代码。Android / Quest 平板跟随问题不要继续塞回普通 `YamaBiliDanmakuV3`，应在独立 Tablet 包内处理。
+后续普通播放器功能应从这个 PC 基线继续，不应从早期试验包或旧版 Package 目录回拷代码。Android / Quest 普通播放器不要套用 PC 端 1.04beta 的外部显示面挂载逻辑，继续保留 1.03；Android / Quest 平板跟随问题不要继续塞回普通 `YamaBiliDanmakuV3`，应在独立 Tablet 包内处理。
 
 ## 1. 从房间状态转向无状态 URL
 
@@ -459,7 +459,7 @@ vizvid1.0.zip
 - 如果选中对象不在播放器根节点内，并且选中对象自身也不包含对应播放器核心组件，则把弹幕模块挂到当前选中的显示面 Transform。
 - YamaPlayer、iwaSync3、VizVid 三条 PC 适配线保持同一规则。
 
-这条 PC 规则解决的是外部显示面 / 非播放器根节点的桌面端生成位置问题。它在 Android / Quest 可拾取平板上曾触发弹幕发灰/变淡，因此不要把 1.04beta PC 包视为安卓平板修复。安卓平板应使用 `YamaBiliDanmakuTabletV3` 独立包，并手动拖入播放用 Controller 作为时间和 URL 数据源。
+这条 PC 规则解决的是外部显示面 / 非播放器根节点的桌面端生成位置问题。它在 Android / Quest 可拾取平板上曾触发弹幕发灰/变淡，因此不要把 1.04beta PC 包视为安卓修复。安卓端规则应保持明确：普通安卓播放器继续使用 1.03；安卓可拾取平板使用 `YamaBiliDanmakuTabletV3` 独立包，并手动拖入播放用 Controller 作为时间和 URL 数据源。
 
 ## 14. 服务端依赖与缓存
 

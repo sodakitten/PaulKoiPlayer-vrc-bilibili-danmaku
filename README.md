@@ -10,7 +10,7 @@
 
 示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-当前 PC / 桌面端推荐版为 **1.04beta**，已适配 **YamaPlayer**、**iwaSync3** 和 **VizVid** 三条播放器线。Android / Quest 上的可拾取平板场景请使用独立的 `YamaBiliDanmakuTabletV3` 平板包，不要把 PC 端外部显示面挂载逻辑直接用于安卓端。
+当前 PC / 桌面端推荐版为 **1.04beta**，已适配 **YamaPlayer**、**iwaSync3** 和 **VizVid** 三条播放器线。Android / Quest 普通大屏或非可拾取播放器继续使用 **1.03**；Android / Quest 可拾取平板场景请使用独立的 `YamaBiliDanmakuTabletV3` 平板包，不要把 PC 端外部显示面挂载逻辑直接用于安卓端。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
@@ -62,11 +62,13 @@ https://danmaku.paulkoishi.com/player/?url=
 
 服务端继续使用 v1.0.3 对应的 `server/`。
 
-### Android / Quest 平板说明
+### Android / Quest 使用说明
 
 1.04beta 的普通 YamaPlayer 包解决的是 PC / 桌面端外部显示面挂载问题：如果你选中的是播放器自己的对象，就按播放器根节点生成；如果你选中的是外部平板或显示面，就挂到当前选中的显示面 Transform。
 
-这套 PC 逻辑在 Android / Quest 可拾取平板上曾出现弹幕明显发灰、变淡的问题。安卓平板不要继续使用普通 `YamaBiliDanmakuV3` 去硬修，而应导入独立的 `YamaBiliDanmakuTabletV3` 包。该包使用独立 namespace、类名、shader 和菜单，生成后需要在 Inspector 中手动拖入播放用的 YamaPlayer `Controller` 作为数据源。
+Android / Quest 普通大屏、固定屏幕或非可拾取播放器继续使用 1.03。只有 Android / Quest 可拾取平板需要导入独立的 `YamaBiliDanmakuTabletV3` 包。该包使用独立 namespace、类名、shader 和菜单，生成后需要在 Inspector 中手动拖入播放用的 YamaPlayer `Controller` 作为数据源。
+
+这套 PC 逻辑在 Android / Quest 可拾取平板上曾出现弹幕明显发灰、变淡的问题。因此安卓端的选择应简单分开：普通安卓播放器用 1.03，可拾取平板用 Tablet 包。
 
 ## 功能
 

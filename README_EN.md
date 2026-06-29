@@ -10,7 +10,7 @@
 
 Example world: [https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-The current recommended PC / desktop release is **1.04beta**. It includes separate adapter lines for **YamaPlayer**, **iwaSync3**, and **VizVid**. For Android / Quest pickup tablet setups, use the separate `YamaBiliDanmakuTabletV3` tablet package instead of applying the PC external-display mounting logic directly.
+The current recommended PC / desktop release is **1.04beta**. It includes separate adapter lines for **YamaPlayer**, **iwaSync3**, and **VizVid**. For Android / Quest fixed screens or non-pickup players, continue using **1.03**. For Android / Quest pickup tablet setups, use the separate `YamaBiliDanmakuTabletV3` tablet package instead of applying the PC external-display mounting logic directly.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
@@ -62,11 +62,13 @@ Current 1.04beta packages:
 
 The server continues to use the v1.0.3 `server/` backend.
 
-### Android / Quest tablet note
+### Android / Quest note
 
 The normal YamaPlayer package in 1.04beta targets PC / desktop external-display mounting: selecting an object inside the player still mounts the danmaku module under the player root, while selecting an external tablet or display surface mounts it under the selected display Transform.
 
-That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup tablets during testing. Do not keep patching the normal `YamaBiliDanmakuV3` package for that scenario. Import the separate `YamaBiliDanmakuTabletV3` package instead. It uses its own namespace, class names, shaders, and menu items. After generating the tablet module, manually drag the playback YamaPlayer `Controller` into the Inspector as the data source.
+For Android / Quest fixed screens, normal large screens, or non-pickup players, continue using 1.03. Only Android / Quest pickup tablets should import the separate `YamaBiliDanmakuTabletV3` package. It uses its own namespace, class names, shaders, and menu items. After generating the tablet module, manually drag the playback YamaPlayer `Controller` into the Inspector as the data source.
+
+That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup tablets during testing. Keep the Android rule simple: normal Android players use 1.03; pickup tablets use the Tablet package.
 
 ## Features
 
