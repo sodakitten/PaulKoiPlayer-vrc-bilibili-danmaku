@@ -10,15 +10,17 @@
 
 示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-当前稳定版为 **1.02**，目前已适配并测试 **YamaPlayer**。后续计划围绕 PaulKoiPlayer 继续适配更多 VRChat 世界播放器。
+当前 PC / 桌面端推荐版为 **1.04beta**，已适配 **YamaPlayer**、**iwaSync3** 和 **VizVid** 三条播放器线。Android / Quest 上的可拾取平板场景请使用独立的 `YamaBiliDanmakuTabletV3` 平板包，不要把 PC 端外部显示面挂载逻辑直接用于安卓端。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
 ## 使用前需要安装
 
-如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，当前 1.02 还需要：
+如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，当前 1.04beta 需要安装你实际使用的播放器：
 
-- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：必须先安装到 Unity 项目中，本组件会挂载到 YamaPlayer 上。
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：使用 `YamaBiliDanmakuV3` 或 `YamaBiliDanmakuTabletV3` 时需要。
+- iwaSync3：使用 `IwaBiliDanmakuV3` 时需要。
+- VizVid：使用 `VizVidBiliDanmakuV3` 时需要。
 - TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
 - Docker：只在你要自行部署 `server/` 后端时需要；只使用公开解析服务时不需要。
 
@@ -41,18 +43,30 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 项目结构
 
-- `Runtime/`、`Editor/`：Unity / UdonSharp 弹幕组件。
+- `Runtime/`、`Editor/`：YamaPlayer PC / 桌面端 Unity / UdonSharp 弹幕组件。
+- `IwaBiliDanmakuV3/`：iwaSync3 专用适配线。
+- `VizVidBiliDanmakuV3/`：VizVid 专用适配线。
+- `YamaBiliDanmakuTabletV3/`：YamaPlayer Android / Quest 可拾取平板专用适配线。
 - [`server/`](server/README.md)：视频解析与弹幕代理服务，提供 Docker 部署。
 - [`docs/DEVELOPMENT_NOTES.md`](docs/DEVELOPMENT_NOTES.md)：组件试错、错误修复与演进记录。
 
 ## 下载
 
-当前正式包：
+当前 1.04beta 发布包：
 
-- `1.02.unitypackage`：Unity 导入包，推荐普通安装使用。
-- `1.02.zip`：Unity / UdonSharp 组件源码包，适合手动检查或复制文件。
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.unitypackage`：YamaPlayer PC / 桌面端 Unity 导入包，来自已验证可用的 `1.04beta.unitypackage`。
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.zip`：YamaPlayer PC / 桌面端源码包。
+- `PaulKoiPlayer-IwaBiliDanmakuV3-1.04beta.zip`：iwaSync3 PC / 桌面端源码包。
+- `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`：VizVid PC / 桌面端源码包。
+- `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`：YamaPlayer Android / Quest 可拾取平板专用包。
 
-服务端未在 1.02 中变更，继续使用 v1.0.0 对应的 `server/`。
+服务端继续使用 v1.0.3 对应的 `server/`。
+
+### Android / Quest 平板说明
+
+1.04beta 的普通 YamaPlayer 包解决的是 PC / 桌面端外部显示面挂载问题：如果你选中的是播放器自己的对象，就按播放器根节点生成；如果你选中的是外部平板或显示面，就挂到当前选中的显示面 Transform。
+
+这套 PC 逻辑在 Android / Quest 可拾取平板上曾出现弹幕明显发灰、变淡的问题。安卓平板不要继续使用普通 `YamaBiliDanmakuV3` 去硬修，而应导入独立的 `YamaBiliDanmakuTabletV3` 包。该包使用独立 namespace、类名、shader 和菜单，生成后需要在 Inspector 中手动拖入播放用的 YamaPlayer `Controller` 作为数据源。
 
 ## 功能
 
@@ -72,7 +86,7 @@ https://danmaku.paulkoishi.com/player/?url=
 - VRChat Worlds SDK（VCC World 项目通常已经包含）
 - UdonSharp（当前 VRChat Worlds SDK 集成版本即可）
 - TextMeshPro Essentials
-- YamaPlayer（当前 1.02 必需）
+- 你使用的目标播放器：YamaPlayer、iwaSync3 或 VizVid
 - 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
 默认解析服务前缀：
@@ -83,7 +97,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. 下载 `1.02.unitypackage` 并导入 Unity，或下载 `1.02.zip` 后手动解压。
+1. 下载与你播放器匹配的 1.04beta 包并导入 Unity；YamaPlayer PC 端推荐直接导入 `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.unitypackage`。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -133,7 +147,7 @@ https://danmaku.paulkoishi.com/player/?url=<网易云歌单链接>&p=1
 
 ## 常用设置
 
-> **这些设置只能在 Unity 编辑器中调整。** 1.02 只生成轻量的玩家控制按钮，用于切换显示区域和开关弹幕。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移仍需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
+> **这些设置只能在 Unity 编辑器中调整。** 1.04beta 只生成轻量的玩家控制按钮，用于切换显示区域和开关弹幕。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移仍需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
 
 | 设置 | 默认值 | 说明 |
 | --- | ---: | --- |
@@ -171,7 +185,7 @@ Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 
 ## 世界内弹幕控制
 
-1.02 会在 `Bili Danmaku Module` 下生成一个轻量的 `Danmaku Controls Canvas`。它包含两个玩家可点击的按钮：
+1.04beta 会在 `Bili Danmaku Module` 下生成一个轻量的 `Danmaku Controls Canvas`。它包含两个玩家可点击的按钮：
 
 - `Danmaku: Full / Half / 1/4`：循环切换全屏、上半屏、上四分之一屏显示区域。
 - `Danmaku: On / Off`：开关弹幕显示。
@@ -212,6 +226,12 @@ UdonSharp > Compile All UdonSharp Programs
 
 ## 当前版本说明
 
+1.04beta 相比 1.03 主要更新 Unity 组件端：
+
+- PC / 桌面端重新采用已验证的外部显示面挂载逻辑：选中播放器内部对象时仍挂播放器根节点；选中外部平板或显示面时挂到当前选中的显示面 Transform。
+- YamaPlayer、iwaSync3、VizVid 三条 PC 适配线保持同一挂载规则。
+- Android / Quest 可拾取平板不再塞进普通 YamaPlayer 包硬修，改为独立 `YamaBiliDanmakuTabletV3` 包。
+
 1.02 相比 1.01 主要更新 Unity 组件端：
 
 - 将 `Max Danmaku Lines` 默认值从 1600 提高到 4096，修复高密度弹幕视频只显示开头一小段的问题。
@@ -228,14 +248,14 @@ UdonSharp > Compile All UdonSharp Programs
 - UI 事件绑定改为 backing `UdonBehaviour.SendCustomEvent`，与 YamaPlayer 的事件绑定方式一致。
 - 修正长弹幕刚发射时可能在屏幕边缘闪一下的问题。
 
-1.02 没有修改 `server/`，服务端继续使用 v1.0.0 对应版本。
+1.04beta 没有修改 `server/`，服务端继续使用 v1.0.3 对应版本。
 
 v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docker 服务端。组件包含彩色弹幕 TMP 描边、轻微加粗、URL 前缀辅助、活动弹幕索引优化，以及暂停后继续播放时的计时补偿。
 
 ## 鸣谢与相关链接
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/)：当前公共解析服务状态页；如果无法访问，说明当前公共服务不可用。
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 1.02 适配并测试的 VRChat 视频播放器。
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 1.04beta 适配并测试的 VRChat 视频播放器之一。
 - [music.znnu.com](https://music.znnu.com/)：服务端网易云音乐解析所使用的第三方服务。
 - [yionchi](https://github.com/yionchi)：`music.znnu.com` 相关服务作者。
 

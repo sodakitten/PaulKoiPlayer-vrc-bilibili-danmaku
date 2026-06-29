@@ -49,7 +49,7 @@ namespace YamaBiliDanmakuV3.Editor
         return;
       }
 
-      Transform parent = FindPlayerRoot(controller.transform);
+      Transform parent = ResolveRigParent(controller);
       GameObject root = BuildRig(controller, parent);
       if (root == null) return;
       Undo.RegisterCreatedObjectUndo(root, "Create Bili Danmaku Module");
@@ -505,6 +505,21 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       return UnityEngine.Object.FindFirstObjectByType<Controller>(FindObjectsInactive.Include);
+    }
+
+    private static Transform ResolveRigParent(Controller controller)
+    {
+      if (controller == null) return null;
+
+      Transform playerRoot = FindPlayerRoot(controller.transform);
+      GameObject selected = Selection.activeGameObject;
+      if (selected == null) return playerRoot;
+
+      Transform selectedTransform = selected.transform;
+      if (playerRoot != null && selectedTransform.IsChildOf(playerRoot)) return playerRoot;
+      if (selectedTransform.GetComponentInChildren<Controller>(true) != null) return playerRoot;
+
+      return selectedTransform;
     }
 
     private static Transform FindPlayerRoot(Transform controllerTransform)

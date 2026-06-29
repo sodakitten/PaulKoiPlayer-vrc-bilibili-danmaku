@@ -9,9 +9,9 @@
 - 编辑器生成器：`Editor/YamaBiliDanmakuRigBuilder3.cs`
 - 镜子可读 TMP Shader：`Shaders/YamaBiliDanmakuTMPMirrorReadable.shader`
 - Docker 服务：`server/src/server.js`
-- 公开版本：`1.02`
+- 公开版本：`1.04beta`（PC / 桌面端），Android / Quest 可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包
 
-后续功能应从这个基线继续，不应从早期试验包或旧版 Package 目录回拷代码。
+后续普通播放器功能应从这个 PC 基线继续，不应从早期试验包或旧版 Package 目录回拷代码。Android / Quest 平板跟随问题不要继续塞回普通 `YamaBiliDanmakuV3`，应在独立 Tablet 包内处理。
 
 ## 1. 从房间状态转向无状态 URL
 
@@ -433,6 +433,33 @@ vizvid1.0.zip
 - 弹幕关闭时已有弹幕瞬间隐藏；重新打开时，如果时间线上该弹幕还未结束，应按当前播放时间恢复到正确位置。
 - 轨道满时优先丢弃新弹幕，不要强行压到已占用轨道造成严重重叠。
 - 测试包只打包对应播放器线目录；稳定版本和 GitHub release 只有在用户明确确认后再提交、推送和发布。
+
+### 可拾取平板与外部显示面挂载
+
+一次失败修复把弹幕模块的 parent 简单改成 `selected.transform.root`，目的是让挂在可拾取平板上的播放器跟随移动。这个判断不够安全：pickup root 往往不是实际屏幕面，弹幕 Canvas 仍按屏幕局部坐标 `(0, 0, -0.02)`、`0.001` 缩放生成，挂到 root 后会偏离显示面，表现为“连弹幕都不显示”。
+
+随后又尝试过两种 beta 修法：
+
+- 直接挂到当前选中的显示面 Transform。
+- 挂到显示面所在 root，再用显示面的世界姿态计算位置。
+
+这两种方案在安卓端都出现弹幕明显发灰/变淡，而切回 1.03 后正常。因此本轮外部挂载尝试判定失败，代码应先回退到 1.03 的生成逻辑：`FindPlayerRoot` / `FindIwaRoot` / `FindVizVidRoot` 决定父级，`BuildRig` 使用播放器线原本的局部坐标。不要在没有新验证方案前再次改生成父级。
+
+1.03 的 `_textAlpha = 0.72` 本身在安卓端验证过没有问题。不要把外部挂载导致的发灰误判成全局透明度问题，也不要为了修挂载问题把默认透明度改成 1.0。
+
+后续平板跟随应做成独立包，而不是塞回正式 `YamaBiliDanmakuV3`。第一版隔离方案使用 `YamaBiliDanmakuTabletV3`：独立 namespace、独立类名、独立 shader/material 路径，菜单放在 `PaulKoiPlayer > YamaPlayer Tablet`。不要再按被选中的显示面 `RectTransform` 推算尺寸；实践中平板 UI 的 Rect 可能极大，会生成夸张的大白板。也不要用 `Controller` 推断平板位置，因为平板可能借用另一个电视上的 YamaPlayer Controller，甚至本地 Controller 已被删除。更稳的方式是：用户选中平板层级下已有的 YamaPlayer/屏幕参考对象，工具在同级生成 Tablet 模块并复制该参考对象的 `localPosition`、`localRotation`，但尺寸保持 1.03 逻辑，也就是模块 `localScale = Vector3.one`、Canvas 自己使用 `1750 x 980` 和 `0.001`。Controller 只作为播放同步数据源绑定到 `_controller`，不能参与位置和大小计算。
+
+### v1.04beta PC 端挂载基准
+
+用户提供的 `D:\Downloads\1.04beta.unitypackage` 已验证为当前 PC 端使用正常的 YamaPlayer 包。解包对比后确认其源码与 `E:\paulkoiplayer\beta11.1.zip` 完全一致，因此 1.04beta PC 端以这版为准。
+
+这版的挂载规则是 `ResolveRigParent(...)`：
+
+- 如果选中对象在播放器自身层级内，仍然挂到播放器根节点，保持普通电视/大屏用法。
+- 如果选中对象不在播放器根节点内，并且选中对象自身也不包含对应播放器核心组件，则把弹幕模块挂到当前选中的显示面 Transform。
+- YamaPlayer、iwaSync3、VizVid 三条 PC 适配线保持同一规则。
+
+这条 PC 规则解决的是外部显示面 / 非播放器根节点的桌面端生成位置问题。它在 Android / Quest 可拾取平板上曾触发弹幕发灰/变淡，因此不要把 1.04beta PC 包视为安卓平板修复。安卓平板应使用 `YamaBiliDanmakuTabletV3` 独立包，并手动拖入播放用 Controller 作为时间和 URL 数据源。
 
 ## 14. 服务端依赖与缓存
 

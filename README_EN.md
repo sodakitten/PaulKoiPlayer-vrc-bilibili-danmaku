@@ -10,15 +10,17 @@
 
 Example world: [https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-The current stable release is **1.02**. It is currently integrated and tested with **YamaPlayer**. Future work will continue under PaulKoiPlayer while adding support for more VRChat video players.
+The current recommended PC / desktop release is **1.04beta**. It includes separate adapter lines for **YamaPlayer**, **iwaSync3**, and **VizVid**. For Android / Quest pickup tablet setups, use the separate `YamaBiliDanmakuTabletV3` tablet package instead of applying the PC external-display mounting logic directly.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
 ## Required before use
 
-If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, 1.02 currently requires:
+If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, 1.04beta requires the player used by the adapter you import:
 
-- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): must be installed in the Unity project first. This component is attached to a YamaPlayer instance.
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): required by `YamaBiliDanmakuV3` and `YamaBiliDanmakuTabletV3`.
+- iwaSync3: required by `IwaBiliDanmakuV3`.
+- VizVid: required by `VizVidBiliDanmakuV3`.
 - TextMeshPro: TMP Essentials must be imported in the Unity project.
 - Docker: only required when self-hosting the `server/` backend. It is not required when using an existing public parser service.
 
@@ -41,18 +43,30 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 ## Repository layout
 
-- `Runtime/` and `Editor/`: the Unity/UdonSharp danmaku component.
+- `Runtime/` and `Editor/`: the YamaPlayer PC / desktop Unity/UdonSharp danmaku component.
+- `IwaBiliDanmakuV3/`: dedicated iwaSync3 adapter line.
+- `VizVidBiliDanmakuV3/`: dedicated VizVid adapter line.
+- `YamaBiliDanmakuTabletV3/`: dedicated YamaPlayer Android / Quest pickup tablet adapter line.
 - [`server/`](server/README_EN.md): the Dockerized media resolver and danmaku proxy.
 - [`docs/DEVELOPMENT_NOTES.md`](docs/DEVELOPMENT_NOTES.md): development history, failed approaches, and fixes (Chinese).
 
 ## Downloads
 
-Current release package:
+Current 1.04beta packages:
 
-- `1.02.unitypackage`: Unity import package, recommended for normal installation.
-- `1.02.zip`: Unity/UdonSharp component source package, useful for manual inspection or file copying.
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.unitypackage`: YamaPlayer PC / desktop Unity import package, copied from the verified working `1.04beta.unitypackage`.
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.zip`: YamaPlayer PC / desktop source package.
+- `PaulKoiPlayer-IwaBiliDanmakuV3-1.04beta.zip`: iwaSync3 PC / desktop source package.
+- `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`: VizVid PC / desktop source package.
+- `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`: dedicated YamaPlayer Android / Quest pickup tablet package.
 
-The server did not change in 1.02. Continue using the v1.0.0 `server/` backend.
+The server continues to use the v1.0.3 `server/` backend.
+
+### Android / Quest tablet note
+
+The normal YamaPlayer package in 1.04beta targets PC / desktop external-display mounting: selecting an object inside the player still mounts the danmaku module under the player root, while selecting an external tablet or display surface mounts it under the selected display Transform.
+
+That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup tablets during testing. Do not keep patching the normal `YamaBiliDanmakuV3` package for that scenario. Import the separate `YamaBiliDanmakuTabletV3` package instead. It uses its own namespace, class names, shaders, and menu items. After generating the tablet module, manually drag the playback YamaPlayer `Controller` into the Inspector as the data source.
 
 ## Features
 
@@ -72,7 +86,7 @@ The server did not change in 1.02. Continue using the v1.0.0 `server/` backend.
 - VRChat Worlds SDK, usually already included by a VCC World project
 - UdonSharp, using the version integrated with the current VRChat Worlds SDK
 - TextMeshPro Essentials
-- YamaPlayer, required by the current 1.02 adapter
+- The target player used by the imported adapter: YamaPlayer, iwaSync3, or VizVid
 - A parser service that returns danmaku in `#YBDM/1` text format
 
 Default parser prefix:
@@ -83,7 +97,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Download `1.02.unitypackage` and import it into Unity, or download `1.02.zip` and extract it manually.
+1. Download the 1.04beta package matching your player and import it into Unity. For YamaPlayer on PC, the recommended package is `PaulKoiPlayer-YamaBiliDanmakuV3-1.04beta.unitypackage`.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -133,7 +147,7 @@ The same endpoint returns video resolution data to the video player and danmaku 
 
 ## Common settings
 
-> **These settings are configured in the Unity Editor only.** 1.02 generates only a lightweight player-facing control panel for display area switching and danmaku on/off. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
+> **These settings are configured in the Unity Editor only.** 1.04beta generates only a lightweight player-facing control panel for display area switching and danmaku on/off. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
 
 | Setting | Default | Description |
 | --- | ---: | --- |
@@ -171,7 +185,7 @@ Changing the Inspector values without running the Apply command does not update 
 
 ## In-world danmaku controls
 
-1.02 generates a lightweight `Danmaku Controls Canvas` under `Bili Danmaku Module`. It contains two player-facing buttons:
+1.04beta generates a lightweight `Danmaku Controls Canvas` under `Bili Danmaku Module`. It contains two player-facing buttons:
 
 - `Danmaku: Full / Half / 1/4`: cycles between full-screen, upper-half, and upper-quarter danmaku areas.
 - `Danmaku: On / Off`: toggles danmaku visibility.
@@ -212,6 +226,12 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 
 ## Current release
 
+Compared with 1.03, 1.04beta updates the Unity component:
+
+- Restores the verified PC / desktop external-display mounting behavior: selecting an object inside the player uses the player root; selecting an external tablet or display surface uses the selected display Transform.
+- Keeps the same mounting rule across the YamaPlayer, iwaSync3, and VizVid PC adapter lines.
+- Moves Android / Quest pickup tablet handling into the separate `YamaBiliDanmakuTabletV3` package instead of patching the normal YamaPlayer package.
+
 Compared with 1.01, 1.02 updates the Unity component:
 
 - Raises the default `Max Danmaku Lines` from 1600 to 4096, fixing dense danmaku videos that previously displayed only the opening section.
@@ -228,14 +248,14 @@ Compared with v1.0.0, 1.01 updates the Unity component:
 - UI event binding now targets the backing `UdonBehaviour.SendCustomEvent`, matching YamaPlayer's event binding pattern.
 - Fixes a brief edge flash that could happen when very long danmaku is emitted.
 
-The `server/` backend did not change in 1.02. Continue using the v1.0.0 server.
+The `server/` backend did not change in 1.04beta. Continue using the v1.0.3 server.
 
 v1.0.0 is the first unified release containing both the Unity component and its matching Docker server. The component includes colored TMP outlines, light semibold text, the URL prefix helper, active-entry update optimization, and pause/resume timing compensation.
 
 ## Acknowledgements and related links
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/): current public parser service status page. If it cannot be reached, the public service is unavailable.
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player currently integrated and tested by 1.02.
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): one of the VRChat video players integrated and tested by 1.04beta.
 - [music.znnu.com](https://music.znnu.com/): the third-party service used by the server for NetEase Cloud Music resolution.
 - [yionchi](https://github.com/yionchi): author of the related `music.znnu.com` service.
 

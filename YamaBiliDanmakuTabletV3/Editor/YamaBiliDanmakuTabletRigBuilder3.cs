@@ -1,4 +1,4 @@
-using TMPro;
+﻿using TMPro;
 using UdonSharp;
 using UdonSharpEditor;
 using UnityEditor;
@@ -9,24 +9,21 @@ using UnityEngine.Events;
 using UnityEngine.UI;
 using VRC.SDK3.Components;
 using VRC.Udon;
-using JLChnToZ.VRC.VVMW;
+using Yamadev.YamaStream;
 
-namespace VizVidBiliDanmakuV3.Editor
+namespace YamaBiliDanmakuTabletV3.Editor
 {
-  public static class VizVidBiliDanmakuRigBuilder3
+  public static class YamaBiliDanmakuTabletRigBuilder3
   {
     private const int PoolSize = 96;
-    private const float CanvasWidth = 2875f;
-    private const float CanvasHeight = 1600f;
-    private const float CanvasLocalX = -0.005f;
-    private const float CanvasLocalY = 1.503f;
-    private const float CanvasLocalZ = -0.02f;
+    private const float CanvasWidth = 1750f;
+    private const float CanvasHeight = 980f;
     private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?url=";
-    private const string DefaultPrefabPath = "Assets/VizVidBiliDanmakuV3/Prefabs/Bili Danmaku Module.prefab";
-    private const string OutlineMaterialPath = "Assets/VizVidBiliDanmakuV3/Materials/Bili Danmaku TMP Outline.mat";
-    private const string ButtonMaterialPath = "Assets/VizVidBiliDanmakuV3/Materials/Bili Danmaku UI Button.mat";
-    private const string MirrorReadableShaderName = "VizVidBiliDanmaku/TMP Mirror Readable";
-    private const string ButtonShaderName = "VizVidBiliDanmaku/UI Button";
+    private const string DefaultPrefabPath = "Assets/YamaBiliDanmakuTabletV3/Prefabs/Bili Danmaku Module.prefab";
+    private const string OutlineMaterialPath = "Assets/YamaBiliDanmakuTabletV3/Materials/Bili Danmaku TMP Outline.mat";
+    private const string ButtonMaterialPath = "Assets/YamaBiliDanmakuTabletV3/Materials/Bili Danmaku UI Button.mat";
+    private const string MirrorReadableShaderName = "YamaBiliDanmakuTablet/TMP Mirror Readable";
+    private const string ButtonShaderName = "YamaBiliDanmakuTablet/UI Button";
     private const string ControlsCanvasName = "Danmaku Controls Canvas";
     private const float ControlsWidth = 260f;
     private const float ControlsHeight = 160f;
@@ -42,44 +39,47 @@ namespace VizVidBiliDanmakuV3.Editor
     private const float DefaultUnderlayDilate = 0.16f;
     private const float DefaultUnderlaySoftness = 0.03f;
 
-    [MenuItem("PaulKoiPlayer/VizVid/Create Bili Danmaku Module", false, 2000)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Create Tablet Bili Danmaku Module", false, 2100)]
     public static void CreateRig()
     {
-      Core core = FindTargetCore();
-      if (core == null)
+      Transform reference = Selection.activeTransform;
+      if (reference == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Select a VizVid object, or an object under VizVid that contains a Core.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku Tablet", "Select the tablet YamaPlayer/screen object whose position and rotation should be copied.", "OK");
         return;
       }
 
-      Transform parent = ResolveRigParent(core);
-      GameObject root = BuildRig(core, parent);
+      Transform parent = reference.parent != null ? reference.parent : reference.root;
+      GameObject root = BuildRig(null, parent);
       if (root == null) return;
-      Undo.RegisterCreatedObjectUndo(root, "Create Bili Danmaku Module");
+
+      root.transform.localPosition = reference.localPosition;
+      root.transform.localRotation = reference.localRotation;
+      Undo.RegisterCreatedObjectUndo(root, "Create Tablet Bili Danmaku Module");
 
       Selection.activeObject = root;
       EditorGUIUtility.PingObject(root);
     }
 
-    [MenuItem("GameObject/VizVid/Bili Danmaku Module", false, 41)]
+    [MenuItem("GameObject/YamaPlayer Tablet/Tablet Bili Danmaku Module", false, 41)]
     public static void CreateRigFromGameObjectMenu()
     {
       CreateRig();
     }
 
-    [MenuItem("GameObject/VizVid/Bili Danmaku Module", true)]
+    [MenuItem("GameObject/YamaPlayer Tablet/Tablet Bili Danmaku Module", true)]
     public static bool ValidateCreateRigFromGameObjectMenu()
     {
-      return FindTargetCore() != null;
+      return Selection.activeTransform != null;
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Save Selected Bili Danmaku Module As Prefab", false, 2001)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Save Selected Tablet Bili Danmaku Module As Prefab", false, 2101)]
     public static void SaveSelectedAsPrefab()
     {
       GameObject selected = Selection.activeGameObject;
       if (selected == null || !HasDanmakuModule(selected))
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Select a Bili Danmaku Module object first.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select a Bili Danmaku Module object first.", "OK");
         return;
       }
 
@@ -88,7 +88,7 @@ namespace VizVidBiliDanmakuV3.Editor
         "Bili Danmaku Module",
         "prefab",
         "Choose where to save the prefab.",
-        "Assets/VizVidBiliDanmakuV3/Prefabs");
+        "Assets/YamaBiliDanmakuTabletV3/Prefabs");
 
       if (string.IsNullOrEmpty(path)) return;
 
@@ -96,7 +96,7 @@ namespace VizVidBiliDanmakuV3.Editor
       GameObject prefab = PrefabUtility.SaveAsPrefabAsset(selected, path);
       if (prefab == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Failed to save prefab.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Failed to save prefab.", "OK");
         return;
       }
 
@@ -104,7 +104,7 @@ namespace VizVidBiliDanmakuV3.Editor
       EditorGUIUtility.PingObject(prefab);
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Create Package Prefab Asset", false, 2002)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Create Package Prefab Asset", false, 2102)]
     public static void CreatePrefabAsset()
     {
       string path = DefaultPrefabPath;
@@ -117,7 +117,7 @@ namespace VizVidBiliDanmakuV3.Editor
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(temp, path);
         if (prefab == null)
         {
-          EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Failed to create prefab asset.", "OK");
+          EditorUtility.DisplayDialog("Yama Bili Danmaku", "Failed to create prefab asset.", "OK");
           return;
         }
 
@@ -130,12 +130,12 @@ namespace VizVidBiliDanmakuV3.Editor
       }
     }
 
-    private static GameObject BuildRig(Core core, Transform parent)
+    private static GameObject BuildRig(Controller controller, Transform parent)
     {
-      GameObject root = new GameObject("Bili Danmaku Module (VizVid)", typeof(RectTransform));
+      GameObject root = new GameObject("Bili Danmaku Tablet Module", typeof(RectTransform));
       Undo.RegisterCreatedObjectUndo(root, "Create Bili Danmaku Module");
       if (parent != null) root.transform.SetParent(parent, false);
-      root.transform.localPosition = new Vector3(CanvasLocalX, CanvasLocalY, CanvasLocalZ);
+      root.transform.localPosition = new Vector3(0f, 0f, -0.02f);
       root.transform.localRotation = Quaternion.identity;
       root.transform.localScale = Vector3.one;
 
@@ -166,12 +166,12 @@ namespace VizVidBiliDanmakuV3.Editor
         rect.anchorMin = new Vector2(0.5f, 0.5f);
         rect.anchorMax = new Vector2(0.5f, 0.5f);
         rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = new Vector2(CanvasWidth, 110f);
+        rect.sizeDelta = new Vector2(1400f, 60f);
 
         TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
         text.raycastTarget = false;
         text.alignment = TextAlignmentOptions.Center;
-        text.fontSize = 52f;
+        text.fontSize = 32f;
         text.enableWordWrapping = false;
         text.overflowMode = TextOverflowModes.Overflow;
         text.extraPadding = true;
@@ -205,12 +205,12 @@ namespace VizVidBiliDanmakuV3.Editor
       TextMeshProUGUI urlPrefixToggleButtonLabel;
       CreateOrFindControlsCanvas(root, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
 
-      System.Type moduleType = FindType("VizVidBiliDanmakuV3.VizVidBiliDanmakuModule3");
+      System.Type moduleType = FindType("YamaBiliDanmakuTabletV3.YamaBiliDanmakuTabletModule3");
       if (moduleType == null)
       {
         EditorUtility.DisplayDialog(
-          "VizVid Bili Danmaku",
-          "VizVidBiliDanmakuModule3 type was not found. Make sure the Runtime script has compiled successfully, then reimport this package or restart Unity.",
+          "Yama Bili Danmaku",
+          "YamaBiliDanmakuTabletModule3 type was not found. Make sure the Runtime script has compiled successfully, then reimport this package or restart Unity.",
           "OK");
         UnityEngine.Object.DestroyImmediate(root);
         return null;
@@ -221,42 +221,48 @@ namespace VizVidBiliDanmakuV3.Editor
       if (module == null)
       {
         EditorUtility.DisplayDialog(
-          "VizVid Bili Danmaku",
-          "Failed to add UdonSharp component. Try creating a U# Program Asset manually from Assets/VizVidBiliDanmakuV3/Runtime/VizVidBiliDanmakuModule3.cs, then run this menu again.",
+          "Yama Bili Danmaku",
+          "Failed to add UdonSharp component. Try creating a U# Program Asset manually from Assets/YamaBiliDanmakuTabletV3/Runtime/YamaBiliDanmakuTabletModule3.cs, then run this menu again.",
           "OK");
         UnityEngine.Object.DestroyImmediate(root);
         return null;
       }
 
-      WireModule(module, core, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
-      CreateUrlPrefixHelper(root, core, urlPrefixToggleButton, urlPrefixToggleButtonLabel);
+      Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(root, controller, urlPrefixToggleButtonLabel);
+      WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
+      WireModuleUrlPrefixControls(module, urlPrefixHelper, urlPrefixToggleButtonLabel, urlPrefixToggleButton);
 
       return root;
     }
 
-    private static void CreateUrlPrefixHelper(GameObject root, Core core, Button urlPrefixToggleButton, TextMeshProUGUI urlPrefixToggleButtonLabel)
+    private static Component CreateOrFindUrlPrefixHelper(GameObject root, Controller controller, TextMeshProUGUI urlPrefixToggleButtonLabel)
     {
-      System.Type helperType = FindType("VizVidBiliDanmakuV3.VizVidBiliUrlPrefixHelper3");
+      System.Type helperType = FindType("YamaBiliDanmakuTabletV3.YamaBiliTabletUrlPrefixHelper3");
       if (helperType == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: VizVidBiliUrlPrefixHelper3 type was not found. URL prefix helper was not created.");
-        return;
+        Debug.LogWarning("Yama Bili Danmaku: YamaBiliTabletUrlPrefixHelper3 type was not found. URL prefix helper was not created.");
+        return null;
       }
 
       EnsureUdonSharpProgramAsset(helperType);
 
-      GameObject helperObject = new GameObject("Bili URL Prefix Helper (VizVid)");
-      helperObject.transform.SetParent(root.transform, false);
-
-      Component helper = AddUdonSharpComponentForType(helperObject, helperType);
+      Component helper = root == null ? null : root.GetComponentInChildren(helperType, true);
       if (helper == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: failed to add Bili URL Prefix Helper.");
-        UnityEngine.Object.DestroyImmediate(helperObject);
-        return;
+        GameObject helperObject = new GameObject("Bili URL Prefix Helper");
+        helperObject.transform.SetParent(root.transform, false);
+
+        helper = AddUdonSharpComponentForType(helperObject, helperType);
+        if (helper == null)
+        {
+          Debug.LogWarning("Yama Bili Danmaku: failed to add Bili URL Prefix Helper.");
+          UnityEngine.Object.DestroyImmediate(helperObject);
+          return null;
+        }
       }
 
-      WireUrlPrefixHelper(helper, core, urlPrefixToggleButton, urlPrefixToggleButtonLabel);
+      WireUrlPrefixHelper(helper, controller, urlPrefixToggleButtonLabel);
+      return helper;
     }
 
     private static void CreateOrFindControlsCanvas(GameObject root, out Button displayAreaButton, out TextMeshProUGUI displayAreaButtonLabel, out Button danmakuToggleButton, out TextMeshProUGUI danmakuToggleButtonLabel, out Button urlPrefixToggleButton, out TextMeshProUGUI urlPrefixToggleButtonLabel)
@@ -453,7 +459,7 @@ namespace VizVidBiliDanmakuV3.Editor
       System.Type uiShapeType = FindVrcUiShapeType();
       if (uiShapeType == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: VRC_UiShape type was not found. Add VRC_UiShape to Danmaku Controls Canvas manually if the buttons are not clickable in VRChat.");
+        Debug.LogWarning("Yama Bili Danmaku: VRC_UiShape type was not found. Add VRC_UiShape to Danmaku Controls Canvas manually if the buttons are not clickable in VRChat.");
         return;
       }
 
@@ -487,7 +493,7 @@ namespace VizVidBiliDanmakuV3.Editor
       }
     }
 
-    private static Core FindTargetCore()
+    private static Controller FindTargetController()
     {
       GameObject selected = Selection.activeGameObject;
       if (selected != null)
@@ -495,50 +501,28 @@ namespace VizVidBiliDanmakuV3.Editor
         Transform current = selected.transform;
         while (current != null)
         {
-          Core core = current.GetComponentInChildren<Core>(true);
-          if (core != null) return core;
+          Controller controller = current.GetComponentInChildren<Controller>(true);
+          if (controller != null) return controller;
           current = current.parent;
         }
       }
 
-      return UnityEngine.Object.FindFirstObjectByType<Core>(FindObjectsInactive.Include);
+      return UnityEngine.Object.FindFirstObjectByType<Controller>(FindObjectsInactive.Include);
     }
 
-    private static Transform ResolveRigParent(Core core)
+    private static Transform FindPlayerRoot(Transform controllerTransform)
     {
-      if (core == null) return null;
-
-      Transform playerRoot = FindVizVidRoot(core.transform);
-      GameObject selected = Selection.activeGameObject;
-      if (selected == null) return playerRoot;
-
-      Transform selectedTransform = selected.transform;
-      if (playerRoot != null && selectedTransform.IsChildOf(playerRoot)) return playerRoot;
-      if (selectedTransform.GetComponentInChildren<Core>(true) != null) return playerRoot;
-
-      return selectedTransform;
-    }
-
-    private static Transform FindVizVidRoot(Transform coreTransform)
-    {
-      if (coreTransform == null) return null;
-
-      Core targetCore = coreTransform.GetComponent<Core>();
-      GameObject selected = Selection.activeGameObject;
-      if (selected != null && targetCore != null)
+      Transform current = controllerTransform;
+      while (current.parent != null)
       {
-        Transform current = selected.transform;
-        while (current != null)
+        current = current.parent;
+        if (current.GetComponentInChildren<Controller>(true) != null)
         {
-          if (current.GetComponentInChildren<Core>(true) == targetCore)
-          {
-            return current;
-          }
-          current = current.parent;
+          return current;
         }
       }
 
-      return coreTransform.parent != null ? coreTransform.parent : coreTransform;
+      return controllerTransform.parent;
     }
 
 
@@ -560,7 +544,7 @@ namespace VizVidBiliDanmakuV3.Editor
       }
       catch (System.Exception exception)
       {
-        Debug.LogError("VizVid Bili Danmaku: AddComponent failed: " + exception);
+        Debug.LogError("Yama Bili Danmaku: AddComponent failed: " + exception);
         return null;
       }
     }
@@ -596,13 +580,13 @@ namespace VizVidBiliDanmakuV3.Editor
               Component component = result as Component;
               if (component != null)
               {
-                Debug.Log("VizVid Bili Danmaku: Added UdonSharp component via " + type.FullName + "." + method.Name);
+                Debug.Log("Yama Bili Danmaku: Added UdonSharp component via " + type.FullName + "." + method.Name);
                 return component;
               }
             }
             catch (System.Exception exception)
             {
-              Debug.LogWarning("VizVid Bili Danmaku: UdonSharp add helper failed: " + exception.Message);
+              Debug.LogWarning("Yama Bili Danmaku: UdonSharp add helper failed: " + exception.Message);
             }
           }
         }
@@ -629,24 +613,23 @@ namespace VizVidBiliDanmakuV3.Editor
       }
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Wire Selected Bili Danmaku Module", false, 2003)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Wire Selected Tablet Bili Danmaku Module", false, 2103)]
     public static void WireSelectedModule()
     {
       GameObject selected = Selection.activeGameObject;
       if (selected == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
         return;
       }
 
-      Component module = selected.GetComponent("VizVidBiliDanmakuModule3");
+      Component module = selected.GetComponent("YamaBiliDanmakuTabletModule3");
       if (module == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Selected object does not have VizVidBiliDanmakuModule3. Add it in Inspector first.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Selected object does not have YamaBiliDanmakuTabletModule3. Add it in Inspector first.", "OK");
         return;
       }
 
-      Core core = FindTargetCore();
       RectTransform laneRoot = selected.transform.Find("Danmaku Lanes") as RectTransform;
       TextMeshProUGUI status = null;
       Transform statusTransform = selected.transform.Find("Status");
@@ -660,49 +643,48 @@ namespace VizVidBiliDanmakuV3.Editor
       RemoveRootGraphicRaycaster(selected);
       CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
       TextMeshProUGUI[] pool = selected.GetComponentsInChildren<TextMeshProUGUI>(true);
-      WireModule(module, core, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
-      System.Type helperType = FindType("VizVidBiliDanmakuV3.VizVidBiliUrlPrefixHelper3");
-      Component helper = helperType == null ? null : selected.GetComponentInChildren(helperType, true);
-      if (helper != null) WireUrlPrefixHelper(helper, core, urlPrefixToggleButton, urlPrefixToggleButtonLabel);
+      WireModule(module, null, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
+      Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(selected, null, urlPrefixToggleButtonLabel);
+      WireModuleUrlPrefixControls(module, urlPrefixHelper, urlPrefixToggleButtonLabel, urlPrefixToggleButton);
       ApplyVisualStyleFromModule(module, pool);
-      EditorUtility.DisplayDialog("VizVid Bili Danmaku", "References wired.", "OK");
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "References wired.", "OK");
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Apply Selected Bili Danmaku Visual Style", false, 2005)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Apply Selected Tablet Bili Danmaku Visual Style", false, 2105)]
     public static void ApplySelectedVisualStyle()
     {
       GameObject selected = Selection.activeGameObject;
       if (selected == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
         return;
       }
 
-      Component module = selected.GetComponent("VizVidBiliDanmakuModule3");
+      Component module = selected.GetComponent("YamaBiliDanmakuTabletModule3");
       if (module == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Selected object does not have VizVidBiliDanmakuModule3.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Selected object does not have YamaBiliDanmakuTabletModule3.", "OK");
         return;
       }
 
       ApplyVisualStyleFromModule(module, selected.GetComponentsInChildren<TextMeshProUGUI>(true));
-      EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Visual style applied.", "OK");
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Visual style applied.", "OK");
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Wire Selected Bili URL Prefix Helper", false, 2004)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Wire Selected Tablet Bili URL Prefix Helper", false, 2104)]
     public static void WireSelectedUrlPrefixHelper()
     {
       GameObject selected = Selection.activeGameObject;
       if (selected == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Select the Bili URL Prefix Helper object first.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select the Bili URL Prefix Helper object first.", "OK");
         return;
       }
 
-      Component helper = selected.GetComponent("VizVidBiliUrlPrefixHelper3");
+      Component helper = selected.GetComponent("YamaBiliTabletUrlPrefixHelper3");
       if (helper == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Selected object does not have VizVidBiliUrlPrefixHelper3.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Selected object does not have YamaBiliTabletUrlPrefixHelper3.", "OK");
         return;
       }
 
@@ -718,22 +700,24 @@ namespace VizVidBiliDanmakuV3.Editor
         CreateOrFindControlsCanvas(moduleRoot.gameObject, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
       }
 
-      WireUrlPrefixHelper(helper, FindTargetCore(), urlPrefixToggleButton, urlPrefixToggleButtonLabel);
-      EditorUtility.DisplayDialog("VizVid Bili Danmaku", "URL prefix helper references wired.", "OK");
+      WireUrlPrefixHelper(helper, FindTargetController(), urlPrefixToggleButtonLabel);
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "URL prefix helper references wired.", "OK");
     }
 
-    private static void WireUrlPrefixHelper(Component helper, Core core, Button urlPrefixToggleButton, TextMeshProUGUI urlPrefixToggleButtonLabel)
+    private static void WireUrlPrefixHelper(Component helper, Controller controller, TextMeshProUGUI urlPrefixToggleButtonLabel)
     {
       if (helper == null) return;
 
-      VRCUrlInputField addressInput = FindVizVidAddressInput(core);
+      VRCUrlInputField topInput;
+      VRCUrlInputField bottomInput;
+      FindYamaPlayerUrlInputs(controller, out topInput, out bottomInput);
 
       SerializedObject serialized = new SerializedObject(helper);
-      SerializedProperty coreProperty = serialized.FindProperty("_core");
-      if (coreProperty != null && core != null) coreProperty.objectReferenceValue = core;
+      SerializedProperty topProperty = serialized.FindProperty("_topUrlInputField");
+      if (topProperty != null && topInput != null) topProperty.objectReferenceValue = topInput;
 
-      SerializedProperty addressProperty = serialized.FindProperty("_addressUrlInputField");
-      if (addressProperty != null) addressProperty.objectReferenceValue = addressInput;
+      SerializedProperty bottomProperty = serialized.FindProperty("_bottomUrlInputField");
+      if (bottomProperty != null && bottomInput != null) bottomProperty.objectReferenceValue = bottomInput;
 
       SerializedProperty labelProperty = serialized.FindProperty("_urlPrefixToggleButtonLabel");
       if (labelProperty != null) labelProperty.objectReferenceValue = urlPrefixToggleButtonLabel;
@@ -748,8 +732,8 @@ namespace VizVidBiliDanmakuV3.Editor
 
       serialized.ApplyModifiedPropertiesWithoutUndo();
 
-      AddPrefixInputEventTriggers(addressInput, helper, "ApplyPrefixToEmptyField");
-      AddModuleButtonClick(urlPrefixToggleButton, helper, "ToggleUrlPrefixBackfill");
+      AddPrefixInputEventTriggers(topInput, helper, "ApplyPrefixToTopInput");
+      AddPrefixInputEventTriggers(bottomInput, helper, "ApplyPrefixToBottomInput");
     }
 
     private static void AddPrefixInputEventTriggers(VRCUrlInputField inputField, Component helper, string eventName)
@@ -759,7 +743,7 @@ namespace VizVidBiliDanmakuV3.Editor
       UdonSharpBehaviour behaviour = helper as UdonSharpBehaviour;
       if (behaviour == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: URL prefix helper is not an UdonSharpBehaviour, cannot wire input click events.");
+        Debug.LogWarning("Yama Bili Danmaku: URL prefix helper is not an UdonSharpBehaviour, cannot wire input click events.");
         return;
       }
 
@@ -795,43 +779,41 @@ namespace VizVidBiliDanmakuV3.Editor
       trigger.triggers.Add(entry);
     }
 
-    private static VRCUrlInputField FindVizVidAddressInput(Core core)
+    private static void FindYamaPlayerUrlInputs(Controller controller, out VRCUrlInputField topInput, out VRCUrlInputField bottomInput)
     {
-      if (core == null) return null;
+      topInput = null;
+      bottomInput = null;
+      if (controller == null) return;
 
-      Transform root = FindVizVidRoot(core.transform);
-      if (root == null) root = core.transform;
+      Transform root = FindPlayerRoot(controller.transform);
+      if (root == null) root = controller.transform;
 
-      VRCUrlInputField input = FindInputAtPath(root, "Canvas (1)/Panel/Address");
-      if (input != null) return input;
-
-      input = FindInputAtPath(root, "Canvas (1)/Address");
-      if (input != null) return input;
-
-      VRCUrlInputField[] inputs = root.GetComponentsInChildren<VRCUrlInputField>(true);
-      for (int i = 0; i < inputs.Length; i++)
+      MonoBehaviour[] behaviours = root.GetComponentsInChildren<MonoBehaviour>(true);
+      for (int i = 0; i < behaviours.Length; i++)
       {
-        if (inputs[i] != null && inputs[i].name == "Address") return inputs[i];
+        MonoBehaviour behaviour = behaviours[i];
+        if (behaviour == null || behaviour.GetType().FullName != "Yamadev.YamaStream.UI.UIController") continue;
+
+        SerializedObject serialized = new SerializedObject(behaviour);
+        SerializedProperty topProperty = serialized.FindProperty("_urlInputFieldTop");
+        SerializedProperty bottomProperty = serialized.FindProperty("_urlInputField");
+        if (topProperty != null) topInput = topProperty.objectReferenceValue as VRCUrlInputField;
+        if (bottomProperty != null) bottomInput = bottomProperty.objectReferenceValue as VRCUrlInputField;
+        if (topInput != null || bottomInput != null) return;
       }
 
-      return inputs.Length > 0 ? inputs[0] : null;
+      VRCUrlInputField[] inputs = root.GetComponentsInChildren<VRCUrlInputField>(true);
+      if (inputs.Length > 0) bottomInput = inputs[0];
+      if (inputs.Length > 1) topInput = inputs[1];
     }
 
-    private static VRCUrlInputField FindInputAtPath(Transform root, string path)
-    {
-      if (root == null || string.IsNullOrEmpty(path)) return null;
-
-      Transform target = root.Find(path);
-      return target == null ? null : target.GetComponent<VRCUrlInputField>();
-    }
-
-    private static void WireModule(Component module, Core core, RectTransform laneRoot, TextMeshProUGUI status, TextMeshProUGUI displayAreaButtonLabel, TextMeshProUGUI danmakuToggleButtonLabel, Button displayAreaButton, Button danmakuToggleButton, TextMeshProUGUI[] rawPool)
+    private static void WireModule(Component module, Controller controller, RectTransform laneRoot, TextMeshProUGUI status, TextMeshProUGUI displayAreaButtonLabel, TextMeshProUGUI danmakuToggleButtonLabel, Button displayAreaButton, Button danmakuToggleButton, TextMeshProUGUI[] rawPool)
     {
       if (module == null) return;
 
       SerializedObject serialized = new SerializedObject(module);
-      SerializedProperty coreProperty = serialized.FindProperty("_core");
-      if (coreProperty != null && core != null) coreProperty.objectReferenceValue = core;
+      SerializedProperty controllerProperty = serialized.FindProperty("_controller");
+      if (controllerProperty != null && controller != null) controllerProperty.objectReferenceValue = controller;
 
       SerializedProperty laneProperty = serialized.FindProperty("_laneRoot");
       if (laneProperty != null) laneProperty.objectReferenceValue = laneRoot;
@@ -845,18 +827,15 @@ namespace VizVidBiliDanmakuV3.Editor
       SerializedProperty danmakuToggleLabelProperty = serialized.FindProperty("_danmakuToggleButtonLabel");
       if (danmakuToggleLabelProperty != null) danmakuToggleLabelProperty.objectReferenceValue = danmakuToggleButtonLabel;
 
-      SetBool(serialized, "_loadFromCurrentVizVidUrl", true);
+      SetBool(serialized, "_loadFromCurrentYamaPlayerUrl", true);
       SetInt(serialized, "_laneCount", 12);
-      SetFloat(serialized, "_lineHeight", 92f);
+      SetFloat(serialized, "_lineHeight", 56f);
       SetFloat(serialized, "_scrollDuration", 8f);
       SetFloat(serialized, "_staticDuration", 4f);
       SetBool(serialized, "_dropDanmakuWhenLanesAreFull", true);
       SetFloat(serialized, "_laneSpawnSlackSeconds", 0.05f);
       SetFloat(serialized, "_statusVisibleSeconds", 2f);
-      SetFloat(serialized, "_baseFontSize", 52f);
       SetFloat(serialized, "_fontScale", 1.1f);
-      SetFloat(serialized, "_lineSpacing", 1.35f);
-      SetFloat(serialized, "_characterWidth", 48f);
       SetFloat(serialized, "_textAlpha", 0.72f);
       SetInt(serialized, "_displayAreaMode", 0);
       SetBool(serialized, "_editorBoldText", true);
@@ -890,6 +869,24 @@ namespace VizVidBiliDanmakuV3.Editor
       ApplyVisualStyleFromModule(module, rawPool);
     }
 
+    private static void WireModuleUrlPrefixControls(Component module, Component urlPrefixHelper, TextMeshProUGUI urlPrefixToggleButtonLabel, Button urlPrefixToggleButton)
+    {
+      if (module == null) return;
+
+      SerializedObject serialized = new SerializedObject(module);
+
+      SerializedProperty helperProperty = serialized.FindProperty("_urlPrefixHelper");
+      if (helperProperty != null) helperProperty.objectReferenceValue = urlPrefixHelper;
+
+      SerializedProperty labelProperty = serialized.FindProperty("_urlPrefixToggleButtonLabel");
+      if (labelProperty != null) labelProperty.objectReferenceValue = urlPrefixToggleButtonLabel;
+
+      SetBool(serialized, "_urlPrefixFillEnabled", true);
+
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+      AddModuleButtonClick(urlPrefixToggleButton, module, "ToggleUrlPrefixBackfill");
+    }
+
     private static void AddModuleButtonClick(Button button, Component module, string eventName)
     {
       if (button == null || module == null || string.IsNullOrEmpty(eventName)) return;
@@ -897,7 +894,7 @@ namespace VizVidBiliDanmakuV3.Editor
       UnityAction<string> sendEvent;
       if (!TryGetSendCustomEventAction(module, out sendEvent))
       {
-        Debug.LogWarning("VizVid Bili Danmaku: module is not an UdonSharpBehaviour, cannot wire controls button.");
+        Debug.LogWarning("Yama Bili Danmaku: module is not an UdonSharpBehaviour, cannot wire controls button.");
         return;
       }
 
@@ -935,7 +932,7 @@ namespace VizVidBiliDanmakuV3.Editor
       }
       catch (System.Exception exception)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: failed to resolve backing UdonBehaviour, falling back to UdonSharp proxy. " + exception.Message);
+        Debug.LogWarning("Yama Bili Danmaku: failed to resolve backing UdonBehaviour, falling back to UdonSharp proxy. " + exception.Message);
       }
 
       sendEvent = behaviour.SendCustomEvent;
@@ -951,11 +948,10 @@ namespace VizVidBiliDanmakuV3.Editor
       bool heavyOutlineEnabled = GetBool(serialized, "_editorHeavyOutlineEnabled", true);
       float outlineWidth = GetFloat(serialized, "_editorOutlineWidth", DefaultOutlineWidth);
       float outlineAlpha = GetFloat(serialized, "_editorOutlineAlpha", DefaultOutlineAlpha);
-      float baseFontSize = GetFloat(serialized, "_baseFontSize", 52f);
-      ApplyVisualStyle(rawPool, boldText, heavyOutlineEnabled, outlineWidth, outlineAlpha, baseFontSize);
+      ApplyVisualStyle(rawPool, boldText, heavyOutlineEnabled, outlineWidth, outlineAlpha);
     }
 
-    private static void ApplyVisualStyle(TextMeshProUGUI[] rawPool, bool boldText, bool heavyOutlineEnabled, float outlineWidth, float outlineAlpha, float baseFontSize)
+    private static void ApplyVisualStyle(TextMeshProUGUI[] rawPool, bool boldText, bool heavyOutlineEnabled, float outlineWidth, float outlineAlpha)
     {
       float width = heavyOutlineEnabled ? Mathf.Clamp(outlineWidth, 0f, 0.5f) : 0f;
       Color outlineColor = new Color(0f, 0f, 0f, heavyOutlineEnabled ? Mathf.Clamp01(outlineAlpha) : 0f);
@@ -967,7 +963,6 @@ namespace VizVidBiliDanmakuV3.Editor
         if (text == null || !text.name.StartsWith("Danmaku Text")) continue;
 
         Undo.RecordObject(text, "Apply Bili Danmaku Visual Style");
-        text.fontSize = Mathf.Clamp(baseFontSize, 12f, 120f);
         text.fontStyle = boldText ? FontStyles.Bold : FontStyles.Normal;
         text.extraPadding = true;
         text.outlineWidth = width;
@@ -990,7 +985,7 @@ namespace VizVidBiliDanmakuV3.Editor
         Material source = FindSourceFontMaterial(rawPool);
         if (source == null)
         {
-          Debug.LogWarning("VizVid Bili Danmaku: could not find a TMP source material for outline. Component outline values were still applied.");
+          Debug.LogWarning("Yama Bili Danmaku: could not find a TMP source material for outline. Component outline values were still applied.");
           return null;
         }
 
@@ -1013,7 +1008,7 @@ namespace VizVidBiliDanmakuV3.Editor
       if (shader == null) shader = Shader.Find(ButtonShaderName);
       if (shader == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: UI button shader was not found. Button images may trigger the VRChat SDK built-in UI shader alert.");
+        Debug.LogWarning("Yama Bili Danmaku: UI button shader was not found. Button images may trigger the VRChat SDK built-in UI shader alert.");
         return material;
       }
 
@@ -1071,7 +1066,7 @@ namespace VizVidBiliDanmakuV3.Editor
       if (material.HasProperty("_UnderlayDilate")) material.SetFloat("_UnderlayDilate", DefaultUnderlayDilate);
       if (material.HasProperty("_UnderlaySoftness")) material.SetFloat("_UnderlaySoftness", DefaultUnderlaySoftness);
       if (material.HasProperty("_MirrorFlip")) material.SetInt("_MirrorFlip", 1);
-      if (material.HasProperty("_VVBDMForceMirrorFlip")) material.SetFloat("_VVBDMForceMirrorFlip", 0f);
+      if (material.HasProperty("_YBDMTForceMirrorFlip")) material.SetFloat("_YBDMTForceMirrorFlip", 0f);
     }
 
     private static void ApplyMirrorReadableShader(Material material)
@@ -1079,7 +1074,7 @@ namespace VizVidBiliDanmakuV3.Editor
       Shader shader = Shader.Find(MirrorReadableShaderName);
       if (shader == null)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: mirror-readable TMP shader was not found. Keeping the current TMP shader.");
+        Debug.LogWarning("Yama Bili Danmaku: mirror-readable TMP shader was not found. Keeping the current TMP shader.");
         return;
       }
 
@@ -1134,40 +1129,40 @@ namespace VizVidBiliDanmakuV3.Editor
       }
       else
       {
-        Debug.LogWarning("VizVid Bili Danmaku: could not set VRCUrl serialized value for " + property.propertyPath + ". Set Url Prefix manually in Inspector.");
+        Debug.LogWarning("Yama Bili Danmaku: could not set VRCUrl serialized value for " + property.propertyPath + ". Set Url Prefix manually in Inspector.");
       }
     }
 
     private static bool HasDanmakuModule(GameObject gameObject)
     {
       if (gameObject == null) return false;
-      System.Type moduleType = FindType("VizVidBiliDanmakuV3.VizVidBiliDanmakuModule3");
+      System.Type moduleType = FindType("YamaBiliDanmakuTabletV3.YamaBiliDanmakuTabletModule3");
       if (moduleType != null) return gameObject.GetComponent(moduleType) != null;
-      return gameObject.GetComponent("VizVidBiliDanmakuModule3") != null;
+      return gameObject.GetComponent("YamaBiliDanmakuTabletModule3") != null;
     }
 
-    [MenuItem("PaulKoiPlayer/VizVid/Fix Bili Danmaku U# Program Asset", false, 2006)]
+    [MenuItem("PaulKoiPlayer/YamaPlayer Tablet/Fix Tablet Bili Danmaku U# Program Asset", false, 2106)]
     public static void FixProgramAssetMenu()
     {
-      System.Type moduleType = FindType("VizVidBiliDanmakuV3.VizVidBiliDanmakuModule3");
+      System.Type moduleType = FindType("YamaBiliDanmakuTabletV3.YamaBiliDanmakuTabletModule3");
       if (moduleType == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Runtime type not found. Run Assets > Reimport All first and check Console for C# compile errors.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Runtime type not found. Run Assets > Reimport All first and check Console for C# compile errors.", "OK");
         return;
       }
 
       UnityEngine.Object asset = EnsureUdonSharpProgramAsset(moduleType);
-      System.Type helperType = FindType("VizVidBiliDanmakuV3.VizVidBiliUrlPrefixHelper3");
+      System.Type helperType = FindType("YamaBiliDanmakuTabletV3.YamaBiliTabletUrlPrefixHelper3");
       UnityEngine.Object helperAsset = helperType == null ? null : EnsureUdonSharpProgramAsset(helperType);
       if (asset == null || helperAsset == null)
       {
-        EditorUtility.DisplayDialog("VizVid Bili Danmaku", "Failed to create U# Program Asset.", "OK");
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Failed to create U# Program Asset. Use Create > U# Script manually as described in the README.", "OK");
         return;
       }
 
       Selection.activeObject = asset;
       EditorGUIUtility.PingObject(asset);
-      EditorUtility.DisplayDialog("VizVid Bili Danmaku", "U# Program Assets are ready. Now run UdonSharp > Compile All UdonSharp Programs, then create the module again.", "OK");
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "U# Program Assets are ready. Now run UdonSharp > Compile All UdonSharp Programs, then create the module again.", "OK");
     }
 
     private static UnityEngine.Object EnsureUdonSharpProgramAsset(System.Type moduleType)
@@ -1175,7 +1170,7 @@ namespace VizVidBiliDanmakuV3.Editor
       MonoScript script = FindRuntimeScript(moduleType.Name + ".cs");
       if (script == null)
       {
-        Debug.LogError("VizVid Bili Danmaku: cannot find " + moduleType.Name + ".cs MonoScript.");
+        Debug.LogError("Yama Bili Danmaku: cannot find " + moduleType.Name + ".cs MonoScript.");
         return null;
       }
 
@@ -1185,18 +1180,18 @@ namespace VizVidBiliDanmakuV3.Editor
       System.Type programAssetType = FindType("UdonSharp.UdonSharpProgramAsset");
       if (programAssetType == null)
       {
-        Debug.LogError("VizVid Bili Danmaku: cannot find UdonSharp.UdonSharpProgramAsset type.");
+        Debug.LogError("Yama Bili Danmaku: cannot find UdonSharp.UdonSharpProgramAsset type.");
         return null;
       }
 
-      string basePath = "Assets/VizVidBiliDanmakuV3/Runtime/" + moduleType.Name + ".asset";
+      string basePath = "Assets/YamaBiliDanmakuTabletV3/Runtime/" + moduleType.Name + ".asset";
       EnsureDirectoryForAsset(basePath);
       string path = AssetDatabase.GenerateUniqueAssetPath(basePath);
 
       ScriptableObject asset = ScriptableObject.CreateInstance(programAssetType);
       if (asset == null)
       {
-        Debug.LogError("VizVid Bili Danmaku: failed to create UdonSharpProgramAsset instance.");
+        Debug.LogError("Yama Bili Danmaku: failed to create UdonSharpProgramAsset instance.");
         return null;
       }
 
@@ -1204,7 +1199,7 @@ namespace VizVidBiliDanmakuV3.Editor
       SerializedProperty source = serialized.FindProperty("sourceCsScript");
       if (source == null)
       {
-        Debug.LogError("VizVid Bili Danmaku: UdonSharpProgramAsset has no sourceCsScript property in this SDK version.");
+        Debug.LogError("Yama Bili Danmaku: UdonSharpProgramAsset has no sourceCsScript property in this SDK version.");
         UnityEngine.Object.DestroyImmediate(asset);
         return null;
       }
@@ -1220,7 +1215,7 @@ namespace VizVidBiliDanmakuV3.Editor
       TryInvokeAssetMethod(asset, "RefreshProgram");
       TryInvokeAssetMethod(asset, "UpdateProgram");
 
-      Debug.Log("VizVid Bili Danmaku: Created U# Program Asset at " + path);
+      Debug.Log("Yama Bili Danmaku: Created U# Program Asset at " + path);
       return asset;
     }
 
@@ -1234,7 +1229,7 @@ namespace VizVidBiliDanmakuV3.Editor
       }
       catch (System.Exception exception)
       {
-        Debug.LogWarning("VizVid Bili Danmaku: " + methodName + " failed: " + exception.Message);
+        Debug.LogWarning("Yama Bili Danmaku: " + methodName + " failed: " + exception.Message);
       }
     }
 
@@ -1285,4 +1280,3 @@ namespace VizVidBiliDanmakuV3.Editor
     }
   }
 }
-

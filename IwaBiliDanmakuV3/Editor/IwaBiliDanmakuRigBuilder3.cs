@@ -52,7 +52,7 @@ namespace IwaBiliDanmakuV3.Editor
         return;
       }
 
-      Transform parent = FindIwaRoot(core.transform);
+      Transform parent = ResolveRigParent(core);
       GameObject root = BuildRig(core, parent);
       if (root == null) return;
       Undo.RegisterCreatedObjectUndo(root, "Create Bili Danmaku Module");
@@ -508,6 +508,21 @@ namespace IwaBiliDanmakuV3.Editor
       }
 
       return UnityEngine.Object.FindFirstObjectByType<VideoCore>(FindObjectsInactive.Include);
+    }
+
+    private static Transform ResolveRigParent(VideoCore core)
+    {
+      if (core == null) return null;
+
+      Transform playerRoot = FindIwaRoot(core.transform);
+      GameObject selected = Selection.activeGameObject;
+      if (selected == null) return playerRoot;
+
+      Transform selectedTransform = selected.transform;
+      if (playerRoot != null && selectedTransform.IsChildOf(playerRoot)) return playerRoot;
+      if (selectedTransform.GetComponentInChildren<VideoCore>(true) != null) return playerRoot;
+
+      return selectedTransform;
     }
 
     private static Transform FindIwaRoot(Transform coreTransform)
