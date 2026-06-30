@@ -35,6 +35,7 @@ namespace VizVidBiliDanmakuV3
       if (Utilities.IsValid(_core))
       {
         _core._AddListener(this, "_onVideoEnd");
+        _core._AddListener(this, "_OnVideoError");
       }
       if (_enableUrlPrefixOnInput) SendCustomEventDelayedSeconds(nameof(WatchInputField), _inputWatchSeconds);
       if (_keepPrefixWhenEmpty) SendCustomEventDelayedSeconds(nameof(RefreshLoop), _refreshSeconds);
@@ -94,7 +95,7 @@ namespace VizVidBiliDanmakuV3
       }
       else
       {
-        ClearPrefixIfOnlyPrefix();
+        ClearPrefixIfOnlyPrefixWhenIdle();
       }
     }
 
@@ -131,6 +132,34 @@ namespace VizVidBiliDanmakuV3
       SendCustomEventDelayedSeconds(nameof(ApplyPrefixToEmptyFieldNow), 0.25f);
     }
 
+    public void _OnVideoError()
+    {
+      if (!_enableUrlPrefixOnInput) return;
+      SendCustomEventDelayedSeconds(nameof(RecoverPrefixAfterVideoError), 0.5f);
+    }
+
+    public void RecoverPrefixAfterVideoError()
+    {
+      if (!_enableUrlPrefixOnInput) return;
+      if (IsVizVidBusy())
+      {
+        SendCustomEventDelayedSeconds(nameof(RecoverPrefixAfterVideoError), 0.5f);
+        return;
+      }
+
+      if (!Utilities.IsValid(_addressUrlInputField) || VRCUrl.IsNullOrEmpty(_urlPrefix) || string.IsNullOrEmpty(_urlPrefix.Get())) return;
+
+      string inputUrl = GetUrlString(_addressUrlInputField.GetUrl());
+      string coreUrl = "";
+      if (Utilities.IsValid(_core)) coreUrl = GetUrlString(_core.Url);
+      if (string.IsNullOrEmpty(inputUrl) || (!string.IsNullOrEmpty(coreUrl) && inputUrl == coreUrl))
+      {
+        _addressUrlInputField.SetUrl(_urlPrefix);
+        _inputWasActive = IsInputActive(_addressUrlInputField);
+        _inputWasEmpty = IsInputEmpty(_addressUrlInputField);
+      }
+    }
+
     private bool IsInputActive(VRCUrlInputField inputField)
     {
       return Utilities.IsValid(inputField) && inputField.gameObject.activeInHierarchy;
@@ -147,25 +176,26 @@ namespace VizVidBiliDanmakuV3
     private bool IsVizVidBusy()
     {
       if (!Utilities.IsValid(_core)) return false;
-      if (_core.IsLoading || _core.IsPlaying || _core.IsPaused) return true;
-
-      VRCUrl currentUrl = _core.Url;
-      return !VRCUrl.IsNullOrEmpty(currentUrl) && !string.IsNullOrEmpty(currentUrl.Get());
+      return _core.IsLoading || _core.IsPlaying || _core.IsPaused;
     }
 
-    private void ClearPrefixIfOnlyPrefix()
+    private void ClearPrefixIfOnlyPrefixWhenIdle()
     {
+      if (IsVizVidBusy()) return;
       if (!Utilities.IsValid(_addressUrlInputField) || VRCUrl.IsNullOrEmpty(_urlPrefix)) return;
 
-      VRCUrl currentUrl = _addressUrlInputField.GetUrl();
-      if (VRCUrl.IsNullOrEmpty(currentUrl)) return;
+      string current = GetUrlString(_addressUrlInputField.GetUrl());
+      string prefix = GetUrlString(_urlPrefix);
+      if (string.IsNullOrEmpty(current) || string.IsNullOrEmpty(prefix) || current != prefix) return;
 
-      string current = currentUrl.Get();
-      string prefix = _urlPrefix.Get();
-      if (string.IsNullOrEmpty(current) || current == prefix)
-      {
-        _addressUrlInputField.SetUrl(VRCUrl.Empty);
-      }
+      _addressUrlInputField.SetUrl(VRCUrl.Empty);
+      _inputWasActive = IsInputActive(_addressUrlInputField);
+      _inputWasEmpty = true;
+    }
+
+    private string GetUrlString(VRCUrl url)
+    {
+      return VRCUrl.IsNullOrEmpty(url) ? "" : url.Get();
     }
 
     private void UpdateUrlPrefixToggleButtonLabel()

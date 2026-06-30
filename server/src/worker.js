@@ -108,6 +108,9 @@ async function handleResolve(_request, env, ctx, requestUrl) {
 
 async function parseInputUrl(rawValue, env, ctx, forcedPage = 0) {
   let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
   normalizedUrl = await expandB23Url(normalizedUrl, env, ctx);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
@@ -135,6 +138,9 @@ async function parseInputUrl(rawValue, env, ctx, forcedPage = 0) {
 
 async function parseLiveInput(rawValue, env, ctx) {
   let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
   normalizedUrl = await expandB23Url(normalizedUrl, env, ctx);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
@@ -155,7 +161,7 @@ function parseLiveRoomId(url) {
 
 async function expandB23Url(value, env, ctx) {
   const parsed = tryParseUrl(value);
-  if (!parsed || parsed.hostname.toLowerCase() !== "b23.tv") return value;
+  if (!parsed || !isBilibiliShortHost(parsed.hostname)) return value;
   return cachedText(`short:${value}`, 1800, env, ctx, async () => {
     let current = value;
     for (let i = 0; i < 5; i++) {
@@ -163,10 +169,48 @@ async function expandB23Url(value, env, ctx) {
       const location = response.headers.get("Location");
       if (!location) return current;
       current = new URL(location, current).toString();
-      if (!tryParseUrl(current)?.hostname.toLowerCase().endsWith("b23.tv")) return current;
+      const currentHost = tryParseUrl(current)?.hostname || "";
+      if (!isBilibiliShortHost(currentHost)) return current;
     }
     return current;
   });
+}
+
+function extractSupportedUrlFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return text;
+  if (tryParseUrl(text)) return text;
+
+  const urls = text.match(/https?:\/\/[^\s"'<>]+/ig) || [];
+  for (const rawUrl of urls) {
+    const candidate = cleanupSharedUrl(rawUrl);
+    const parsed = tryParseUrl(candidate);
+    if (!parsed) continue;
+    if (isSupportedSourceUrl(parsed)) return candidate;
+  }
+
+  return text;
+}
+
+function cleanupSharedUrl(value) {
+  return String(value || "").trim().replace(/[)\]}>，。！？、；：]+$/u, "");
+}
+
+function isSupportedSourceUrl(parsed) {
+  const host = normalizeHost(parsed.hostname);
+  if (host === "b23.tv") return true;
+  if (host === "bili2233.cn") return true;
+  if (host === "biliplayer.91vrchat.com") return true;
+  if (host === "live.bilibili.com") return true;
+  if (host === "bilibili.com" || host.endsWith(".bilibili.com")) return true;
+  if (host === "163cn.tv") return true;
+  if (isNeteaseHost(host)) return true;
+  return parsed.pathname.replace(/\/+$/, "") === "/player" && parsed.searchParams.has("url");
+}
+
+function isBilibiliShortHost(value) {
+  const host = normalizeHost(value);
+  return host === "b23.tv" || host === "bili2233.cn";
 }
 
 function unwrapKnownPlayerUrl(value) {
@@ -385,7 +429,12 @@ async function parseNeteaseInput(rawValue, env, ctx, forcedPage = 0) {
   let normalizedUrl = decodeRepeatedly(rawValue);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
   normalizedUrl = await expandNeteaseShortUrl(normalizedUrl, env, ctx);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
   const parsed = tryParseFlexibleUrl(normalizedUrl);
   if (!parsed || !isNeteaseHost(parsed.hostname)) return null;
@@ -734,7 +783,8 @@ async function proxyToDocker(request, env, requestUrl) {
 function isBilibiliLikeSource(value) {
   const decoded = decodeRepeatedly(value);
   const unwrapped = unwrapKnownPlayerUrl(decoded);
-  const candidates = [value, decoded, unwrapped, decodeRepeatedly(unwrapped)];
+  const extracted = extractSupportedUrlFromText(decodeRepeatedly(unwrapped));
+  const candidates = [value, decoded, unwrapped, decodeRepeatedly(unwrapped), extracted];
   return candidates.some((candidate) => {
     const textValue = String(candidate || "");
     if (/BV[0-9A-Za-z]{10,}/i.test(textValue) || /(?:^|[?&/])av\d+/i.test(textValue)) return true;
@@ -743,8 +793,7 @@ function isBilibiliLikeSource(value) {
     const host = normalizeHost(parsed.hostname);
     return host === "bilibili.com" ||
       host.endsWith(".bilibili.com") ||
-      host === "b23.tv" ||
-      host === "bili2233.cn";
+      isBilibiliShortHost(host);
   });
 }
 

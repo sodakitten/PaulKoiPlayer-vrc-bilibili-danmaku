@@ -426,6 +426,19 @@ vizvid1.0.zip
 - 播放中、加载中、暂停中仍然不应回填；播放结束自动回填可以保留，但必须只在输入框为空时执行。
 - 若再次实现这个开关，应先在 Unity/VRChat 中单独验证 `VRCUrlInputField.SetUrl`、`onValueChanged`、`onEndEdit` 与 VizVid `UIHandler` 的交互，再合入测试包。
 
+### VizVid 错误 URL 后 URL Fill 卡死
+
+VizVid 在视频加载失败或 URL 无效后，`Core.Url` 可能仍保留失败的 URL。旧版 `VizVidBiliUrlPrefixHelper3.IsVizVidBusy()` 把“Core 中存在非空 URL”也当成 busy，于是错误后即使播放器已经不在加载/播放，URL Fill 仍会被永久挡住，按钮开关也无法重新补回前缀，必须先播放一个正常视频才能解除。
+
+修复原则：
+
+- busy 只应代表 `IsLoading`、`IsPlaying` 或 `IsPaused`，不能因为 `Core.Url` 残留非空就一直 busy。
+- URL Fill 关闭时不能任意清空输入框；只允许在播放器空闲、且输入框内容严格等于自动前缀时调用 `SetUrl(VRCUrl.Empty)`，用于去掉 untouched 的自动前缀。
+- URL Fill helper 注册 VizVid `_OnVideoError`，错误后延迟恢复；如果输入框为空，或输入框内容等于 VizVid 失败时残留的 `Core.Url`，则写回解析前缀。
+- 不改弹幕下载、解析、播放同步和渲染逻辑。
+
+后续又发现：在普通输入模式下，如果输入框当前只是自动填入的前缀，`URL Fill: Off` 看起来没有效果。修正为：Off 时只在播放器空闲、且输入框内容严格等于自动前缀时清空输入框；如果玩家已经输入了真实 URL，或者 VizVid 正在加载/播放/暂停，则不改输入框。这样保留 Off 的即时可见效果，同时避免再次把“开关状态”和“任意清空输入框”绑死。
+
 ### 跨播放器线的维护规则
 
 - 播放器适配层可以不同，弹幕解析和渲染主逻辑应保持同一种行为。
@@ -468,6 +481,12 @@ vizvid1.0.zip
 网易云音乐解析依赖第三方服务 [https://music.znnu.com/](https://music.znnu.com/)。该依赖不是本项目控制的服务，接口变化、限流、地区限制或不可用都会影响网易云功能。
 
 真实 `BILI_COOKIE`、Token 和 `.env` 不得提交到仓库。
+
+### v1.0.3new 后端刷新
+
+`vrc-bilibili-danmaku-server-v1.0.3new.zip` 仍然保持公开版本号 `1.0.3`，但内部加入了几项防护和兼容改动：请求限流、上游请求超时、失败缓存、输入 URL 白名单、B 站 / 网易云分享文本中的链接提取、`bili2233.cn` 短链识别，以及更完整的缓存 / 限流 / 上游失败统计。
+
+这次后端改动不改变 Unity 端 URL Prefix、弹幕解析和播放同步接口。发布时应替换 release 中的 `vrc-bilibili-danmaku-server-v1.0.3.zip` 资产，但 release tag 继续使用 `v1.0.3`。
 
 ## 后续修改检查表
 

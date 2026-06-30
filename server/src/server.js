@@ -28,6 +28,17 @@ const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 
 const NETEASE_PLAYLIST_CACHE_MAX_ENTRIES = intEnv("NETEASE_PLAYLIST_CACHE_MAX_ENTRIES", 100);
 const NETEASE_URL_CACHE_MAX_ENTRIES = intEnv("NETEASE_URL_CACHE_MAX_ENTRIES", 500);
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
+const BILI_FETCH_TIMEOUT_MS = intEnv("BILI_FETCH_TIMEOUT_SECONDS", 12) * 1000;
+const RATE_LIMIT_WINDOW_MS = intEnv("RATE_LIMIT_WINDOW_SECONDS", 60) * 1000;
+const RATE_LIMIT_COOLDOWN_MS = intEnv("RATE_LIMIT_COOLDOWN_SECONDS", 120) * 1000;
+const RATE_LIMIT_GENERAL = intEnv("RATE_LIMIT_GENERAL_PER_WINDOW", 300);
+const RATE_LIMIT_HOME = intEnv("RATE_LIMIT_HOME_PER_WINDOW", 60);
+const RATE_LIMIT_PLAYER = intEnv("RATE_LIMIT_PLAYER_PER_WINDOW", 120);
+const RATE_LIMIT_API_DANMAKU = intEnv("RATE_LIMIT_API_DANMAKU_PER_WINDOW", 80);
+const RATE_LIMIT_API_RESOLVE = intEnv("RATE_LIMIT_API_RESOLVE_PER_WINDOW", 60);
+const RATE_LIMIT_CACHE_STATS = intEnv("RATE_LIMIT_CACHE_STATS_PER_WINDOW", 20);
+const FAILURE_CACHE_TTL_MS = intEnv("FAILURE_CACHE_TTL_SECONDS", 180) * 1000;
+const FAILURE_CACHE_MAX_ENTRIES = intEnv("FAILURE_CACHE_MAX_ENTRIES", 500);
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
 const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || process.env.TZ || "Asia/Shanghai";
@@ -39,6 +50,8 @@ const videoUrlCache = new Map();
 const danmakuCache = new Map();
 const neteasePlaylistCache = new Map();
 const neteaseUrlCache = new Map();
+const failureCache = new Map();
+const rateLimitBuckets = new Map();
 const inflight = new Map();
 let znnuKeySession = null;
 let znnuIp = null;
@@ -63,9 +76,15 @@ const stats = {
   playerDanmakuRequests: 0,
   apiDanmakuRequests: 0,
   resolveRequests: 0,
+  unsupportedUrlRejected: 0,
   legacyRejected: 0,
   errors: 0,
-  emittedDanmakuRows: 0
+  emittedDanmakuRows: 0,
+  rateLimited: 0,
+  failureCacheHits: 0,
+  failureCacheWrites: 0,
+  upstreamTimeouts: 0,
+  upstreamErrors: 0
 };
 let statsDirty = false;
 
@@ -88,6 +107,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    const rateLimit = checkRateLimit(req, requestUrl);
+    if (!rateLimit.allowed) {
+      stats.totalRequests++;
+      stats.rateLimited++;
+      markStatsDirty();
+      sendText(res, 429, `too many requests\nretry_after=${rateLimit.retryAfterSeconds}\n`, {
+        "Retry-After": String(rateLimit.retryAfterSeconds),
+        ...noStoreHeaders()
+      });
       return;
     }
 
@@ -156,6 +187,11 @@ async function handlePlayer(req, res, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) {
     sendText(res, 400, "missing url\n");
+    return;
+  }
+  const whitelist = validateInputSource(source);
+  if (!whitelist.allowed) {
+    sendWhitelistRejection(res, whitelist);
     return;
   }
 
@@ -254,6 +290,18 @@ async function handleResolve(res, requestUrl) {
     sendJson(res, 400, { error: "missing url" }, noStoreHeaders());
     return;
   }
+  const whitelist = validateInputSource(source);
+  if (!whitelist.allowed) {
+    stats.unsupportedUrlRejected++;
+    markStatsDirty();
+    sendJson(res, 400, {
+      error: whitelist.error,
+      host: whitelist.host,
+      path: whitelist.path,
+      inputUrl: source
+    }, noStoreHeaders());
+    return;
+  }
 
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = await parseInputUrl(source, forcedPage);
@@ -291,6 +339,13 @@ async function handleApiDanmaku(res, requestUrl) {
   stats.apiDanmakuRequests++;
   const source = requestUrl.searchParams.get("url") || "";
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
+  if (source) {
+    const whitelist = validateInputSource(source);
+    if (!whitelist.allowed) {
+      sendWhitelistRejection(res, whitelist);
+      return;
+    }
+  }
   let input = source ? await parseInputUrl(source, forcedPage) : {
     normalizedUrl: "",
     bvid: normalizeBvid(requestUrl.searchParams.get("bvid") || ""),
@@ -391,7 +446,12 @@ async function parseNeteaseInput(rawValue, forcedPage = 0) {
   let normalizedUrl = decodeRepeatedly(rawValue);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
   normalizedUrl = await expandNeteaseShortUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
 
   const parsed = tryParseFlexibleUrl(normalizedUrl);
@@ -412,7 +472,7 @@ async function parseNeteaseInput(rawValue, forcedPage = 0) {
     const path = String(candidate.pathname || "");
     const lowerPath = path.toLowerCase();
     const isPlaylistPath = /(^|\/)(?:f\/|m\/)?playlist(\/|$)/.test(lowerPath) || lowerPath.includes("toplist");
-    const isSongPath = /(^|\/)(?:m\/)?song(\/|$)/.test(lowerPath) || lowerPath.includes("/song/media/outer/url");
+    const isSongPath = /(^|\/)(?:f\/|m\/)?song(\/|$)/.test(lowerPath) || lowerPath.includes("/song/media/outer/url");
 
     if (isPlaylistPath) {
       const playlistId = extractNeteaseId(candidate, "playlist");
@@ -448,7 +508,7 @@ async function expandNeteaseShortUrl(value) {
   const parsed = tryParseFlexibleUrl(value);
   if (!parsed || normalizeHost(parsed.hostname) !== "163cn.tv") return value;
 
-  return singleflight(`netease-short:${parsed.href}`, async () => {
+  return singleflightWithFailureCache(`netease-short:${parsed.href}`, async () => {
     const json = await znnuGetJson("/api/redirect", { url: parsed.href });
     if (json && json.code === 200 && typeof json.redirectUrl === "string" && json.redirectUrl) {
       return json.redirectUrl;
@@ -603,14 +663,17 @@ async function znnuGetJson(path, query = {}) {
 
 async function znnuFetchJson(urlOrPath, options = {}) {
   const url = urlOrPath instanceof URL ? urlOrPath : new URL(urlOrPath, ZNNU_BASE_URL);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: options.method || "GET",
     headers: options.headers || znnuHeaders(),
-    body: options.body,
-    signal: AbortSignal.timeout(ZNNU_FETCH_TIMEOUT_MS)
-  });
+    body: options.body
+  }, ZNNU_FETCH_TIMEOUT_MS, "ZNNU");
   const text = await response.text();
-  if (!response.ok) throw new Error(`ZNNU request failed with HTTP ${response.status}.`);
+  if (!response.ok) {
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw new Error(`ZNNU request failed with HTTP ${response.status}.`);
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -663,13 +726,14 @@ async function getSimpleCached(map, key, ttlMs, maxEntries, loader) {
   const cached = map.get(key);
   if (cached && Date.now() - cached.time < ttlMs) return cached.value;
   if (cached) map.delete(key);
+  throwCachedFailure(key);
 
   return singleflight(key, async () => {
     const current = map.get(key);
     if (current && Date.now() - current.time < ttlMs) return current.value;
     if (current) map.delete(key);
 
-    const value = await loader();
+    const value = await loadWithFailureCache(key, loader);
     setCacheEntry(map, key, value, maxEntries);
     return value;
   });
@@ -677,6 +741,9 @@ async function getSimpleCached(map, key, ttlMs, maxEntries, loader) {
 
 async function parseInputUrl(rawValue, forcedPage = 0) {
   let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
   normalizedUrl = await expandB23Url(normalizedUrl);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
@@ -710,6 +777,9 @@ async function parseInputUrl(rawValue, forcedPage = 0) {
 
 async function parseLiveInput(rawValue) {
   let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
   normalizedUrl = await expandB23Url(normalizedUrl);
   normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
   normalizedUrl = decodeRepeatedly(normalizedUrl);
@@ -746,23 +816,178 @@ function parseLiveRoomId(url) {
 
 async function expandB23Url(value) {
   const parsed = tryParseUrl(value);
-  if (!parsed || parsed.hostname.toLowerCase() !== "b23.tv") return value;
+  if (!parsed || !isBilibiliShortHost(parsed.hostname)) return value;
 
-  return singleflight(`short:${value}`, async () => {
+  return singleflightWithFailureCache(`short:${value}`, async () => {
     let current = value;
     for (let i = 0; i < 5; i++) {
-      const response = await fetch(current, {
+      const response = await fetchWithTimeout(current, {
         method: "HEAD",
         redirect: "manual",
         headers: biliHeaders()
-      });
+      }, BILI_FETCH_TIMEOUT_MS, "Bilibili short link");
       const location = response.headers.get("Location");
       if (!location) return current;
       current = new URL(location, current).toString();
-      if (!tryParseUrl(current)?.hostname.toLowerCase().endsWith("b23.tv")) return current;
+      const currentHost = tryParseUrl(current)?.hostname || "";
+      if (!isBilibiliShortHost(currentHost)) return current;
     }
     return current;
   });
+}
+
+function extractSupportedUrlFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return text;
+  if (tryParseUrl(text)) return text;
+
+  const urls = extractUrlCandidates(text);
+  for (const rawUrl of urls) {
+    const candidate = cleanSharedUrl(rawUrl);
+    const parsed = tryParseFlexibleUrl(candidate);
+    if (!parsed) continue;
+    if (isSupportedSourceUrl(parsed)) return candidate;
+  }
+
+  return text;
+}
+
+function validateInputSource(value) {
+  const text = decodeRepeatedly(value);
+  const urls = extractUrlCandidates(text);
+  const parsedWhole = tryParseFlexibleUrl(text);
+  if (parsedWhole && !urls.some((candidate) => tryParseFlexibleUrl(candidate)?.href === parsedWhole.href)) {
+    urls.unshift(text);
+  }
+
+  if (urls.length === 0) return { allowed: true };
+
+  for (const rawUrl of urls) {
+    const candidate = cleanSharedUrl(rawUrl);
+    const parsed = tryParseFlexibleUrl(candidate);
+    if (!parsed) return { allowed: false, error: "unsupported_url", host: "", path: "" };
+    const result = validateSupportedUrl(parsed);
+    if (!result.allowed) return result;
+  }
+
+  return { allowed: true };
+}
+
+function validateSupportedUrl(parsed, depth = 0) {
+  const host = normalizeHost(parsed.hostname);
+  const path = parsed.pathname || "/";
+  if (depth > 4) return { allowed: false, error: "url_nested_too_deep", host, path };
+
+  if (host === "biliplayer.91vrchat.com") {
+    if (path.replace(/\/+$/, "") !== "/player" || !parsed.searchParams.has("url")) {
+      return { allowed: false, error: "unsupported_player_url", host, path };
+    }
+    const inner = decodeRepeatedly(parsed.searchParams.get("url") || "");
+    const innerParsed = tryParseFlexibleUrl(inner);
+    if (!innerParsed && (normalizeBvid(inner) || extractAid(inner))) return { allowed: true };
+    if (!innerParsed) return { allowed: false, error: "unsupported_player_inner_url", host, path };
+    return validateSupportedUrl(innerParsed, depth + 1);
+  }
+
+  if (isBilibiliShortHost(host)) {
+    return path.replace(/\/+$/, "").length > 1
+      ? { allowed: true }
+      : { allowed: false, error: "unsupported_bilibili_short_path", host, path };
+  }
+
+  if (host === "163cn.tv") {
+    return path.replace(/\/+$/, "").length > 1
+      ? { allowed: true }
+      : { allowed: false, error: "unsupported_netease_short_path", host, path };
+  }
+
+  if (isAllowedBilibiliHost(host)) {
+    return isAllowedBilibiliPath(parsed, host)
+      ? { allowed: true }
+      : { allowed: false, error: "unsupported_bilibili_path", host, path };
+  }
+
+  if (isNeteaseHost(host)) {
+    return isAllowedNeteasePath(parsed, host)
+      ? { allowed: true }
+      : { allowed: false, error: "unsupported_netease_path", host, path };
+  }
+
+  return { allowed: false, error: "unsupported_url", host, path };
+}
+
+function extractUrlCandidates(value) {
+  const text = String(value || "").trim();
+  const candidates = text.match(/https?:\/\/[^\s"'<>]+/ig) || [];
+  const schemelessPattern = /(?:^|[\s"'(<])((?:bilibili\.com|www\.bilibili\.com|m\.bilibili\.com|live\.bilibili\.com|space\.bilibili\.com|t\.bilibili\.com|b23\.tv|bili2233\.cn|biliplayer\.91vrchat\.com|music\.163\.com|y\.music\.163\.com|163cn\.tv)\/[^\s"'<>]*)/ig;
+  let match;
+  while ((match = schemelessPattern.exec(text)) !== null) {
+    if (match[1]) candidates.push(match[1]);
+  }
+  return [...new Set(candidates.map(cleanSharedUrl).filter(Boolean))];
+}
+
+function cleanSharedUrl(value) {
+  return String(value || "").trim().replace(/[)\]}>.,!?;:\u3002\uFF0C\uFF01\uFF1F\u3001\uFF1B\uFF1A]+$/u, "");
+}
+
+function cleanupSharedUrl(value) {
+  return String(value || "").trim().replace(/[)\]}>，。！？、；：]+$/u, "");
+}
+
+function isSupportedSourceUrl(parsed) {
+  return validateSupportedUrl(parsed).allowed;
+}
+
+function isBilibiliShortHost(value) {
+  const host = normalizeHost(value);
+  return host === "b23.tv" || host === "bili2233.cn";
+}
+
+function isAllowedBilibiliHost(value) {
+  const host = normalizeHost(value);
+  return host === "bilibili.com" ||
+    host === "m.bilibili.com" ||
+    host === "live.bilibili.com" ||
+    host === "space.bilibili.com" ||
+    host === "t.bilibili.com";
+}
+
+function isAllowedBilibiliPath(parsed, host) {
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  if (host === "live.bilibili.com") {
+    return /^\/\d+/.test(path) || parsed.searchParams.has("room_id") || parsed.searchParams.has("roomid");
+  }
+  if (host === "space.bilibili.com" || host === "t.bilibili.com") {
+    return path !== "/";
+  }
+  return /^\/video\/(?:BV[0-9A-Za-z]{10,}|av\d+)/i.test(path) ||
+    /^\/bangumi\/play\//i.test(path) ||
+    /^\/list\//i.test(path) ||
+    /^\/medialist\//i.test(path) ||
+    /^\/opus\//i.test(path);
+}
+
+function isAllowedNeteasePath(parsed, host) {
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  if (host === "y.music.163.com") {
+    return /^\/m\/(?:song|playlist)$/i.test(path) && normalizeNumericId(parsed.searchParams.get("id") || "");
+  }
+
+  if (host !== "music.163.com") return false;
+
+  if (/^\/(?:f\/)?(?:song|playlist)$/i.test(path) && normalizeNumericId(parsed.searchParams.get("id") || "")) {
+    return true;
+  }
+
+  if (!parsed.hash) return false;
+  try {
+    const hashUrl = new URL(parsed.hash.replace(/^#\/?/, "/"), "https://music.163.com");
+    return /^\/(?:song|playlist)$/i.test(hashUrl.pathname.replace(/\/+$/, "")) &&
+      normalizeNumericId(hashUrl.searchParams.get("id") || "");
+  } catch {
+    return false;
+  }
 }
 
 function unwrapKnownPlayerUrl(value) {
@@ -1077,8 +1302,12 @@ async function fetchVideoView(input) {
 async function fetchXmlDanmaku(cid) {
   const url = new URL("https://api.bilibili.com/x/v1/dm/list.so");
   url.searchParams.set("oid", String(cid));
-  const response = await fetch(url, { headers: biliHeaders() });
-  if (!response.ok) throw new Error(`Bilibili XML danmaku failed with HTTP ${response.status}.`);
+  const response = await fetchWithTimeout(url, { headers: biliHeaders() }, BILI_FETCH_TIMEOUT_MS, "Bilibili XML danmaku");
+  if (!response.ok) {
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw new Error(`Bilibili XML danmaku failed with HTTP ${response.status}.`);
+  }
 
   const xml = await response.text();
   const rows = [];
@@ -1107,15 +1336,23 @@ async function fetchDanmakuSegment({ aid, cid, segment }) {
   url.searchParams.set("oid", String(cid));
   url.searchParams.set("pid", String(aid));
   url.searchParams.set("segment_index", String(segment));
-  const response = await fetch(url, { headers: biliHeaders() });
-  if (!response.ok) throw new Error(`Bilibili danmaku segment ${segment} failed with HTTP ${response.status}.`);
+  const response = await fetchWithTimeout(url, { headers: biliHeaders() }, BILI_FETCH_TIMEOUT_MS, `Bilibili danmaku segment ${segment}`);
+  if (!response.ok) {
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw new Error(`Bilibili danmaku segment ${segment} failed with HTTP ${response.status}.`);
+  }
   return decodeDmSegMobileReply(new Uint8Array(await response.arrayBuffer()));
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: biliHeaders() });
+  const response = await fetchWithTimeout(url, { headers: biliHeaders() }, BILI_FETCH_TIMEOUT_MS, "Bilibili API");
   const text = await response.text();
-  if (!response.ok) throw new Error(`Bilibili API failed with HTTP ${response.status}.`);
+  if (!response.ok) {
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw new Error(`Bilibili API failed with HTTP ${response.status}.`);
+  }
   return JSON.parse(text);
 }
 
@@ -1136,6 +1373,7 @@ async function getCached(map, key, ttlMs, statBucket, maxEntries, loader) {
     return { value: cached.value, cacheHit: true };
   }
   if (cached) map.delete(key);
+  throwCachedFailure(key);
 
   if (inflight.has(key)) {
     cacheStats.inflightHits++;
@@ -1143,7 +1381,7 @@ async function getCached(map, key, ttlMs, statBucket, maxEntries, loader) {
   }
 
   statBucket.misses++;
-  const promise = loader().then((value) => {
+  const promise = loadWithFailureCache(key, loader).then((value) => {
     setCacheEntry(map, key, value, maxEntries);
     return value;
   }).finally(() => inflight.delete(key));
@@ -1172,9 +1410,10 @@ async function getCachedDanmaku(key, loader) {
     refreshDanmakuEntry(key, diskEntry, now);
     return diskEntry.value;
   }
+  throwCachedFailure(key);
 
   cacheStats.danmaku.misses++;
-  const promise = loader().then((value) => {
+  const promise = loadWithFailureCache(key, loader).then((value) => {
     const createdAt = Date.now();
     const entry = {
       key,
@@ -1365,6 +1604,7 @@ function pruneAllExpiredCaches() {
   trimDanmakuDiskCache();
   pruneExpiredCache(neteasePlaylistCache, NETEASE_PLAYLIST_CACHE_TTL_MS);
   pruneExpiredCache(neteaseUrlCache, NETEASE_URL_CACHE_TTL_MS);
+  pruneFailureCache();
 }
 
 function syncDanmakuMemoryFromDisk() {
@@ -1383,6 +1623,94 @@ function syncDanmakuMemoryFromDisk() {
   } catch (error) {
     console.warn(`[danmaku-cache] sync failed: ${error.message}`);
   }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = BILI_FETCH_TIMEOUT_MS, label = "upstream") {
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      stats.upstreamTimeouts++;
+      markStatsDirty();
+      throw new Error(`${label} timed out after ${Math.ceil(timeoutMs / 1000)}s.`);
+    }
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw error;
+  }
+}
+
+function isTimeoutError(error) {
+  return error?.name === "AbortError" ||
+    error?.name === "TimeoutError" ||
+    /timed out|timeout/i.test(String(error?.message || ""));
+}
+
+async function loadWithFailureCache(key, loader) {
+  throwCachedFailure(key);
+  try {
+    return await loader();
+  } catch (error) {
+    setFailureCacheEntry(key, error);
+    throw error;
+  }
+}
+
+function throwCachedFailure(key) {
+  const cached = failureCache.get(key);
+  if (!cached) return;
+  const now = Date.now();
+  if (now >= cached.expiresAt) {
+    failureCache.delete(key);
+    return;
+  }
+  stats.failureCacheHits++;
+  markStatsDirty();
+  const error = new Error(cached.message);
+  error.cachedFailure = true;
+  error.originalName = cached.name;
+  throw error;
+}
+
+function setFailureCacheEntry(key, error) {
+  if (!FAILURE_CACHE_TTL_MS) return;
+  const message = String(error?.message || error || "upstream failed").slice(0, 500);
+  const entry = {
+    key,
+    name: String(error?.name || "Error"),
+    message,
+    time: Date.now(),
+    expiresAt: Date.now() + FAILURE_CACHE_TTL_MS
+  };
+  if (failureCache.has(key)) failureCache.delete(key);
+  failureCache.set(key, entry);
+  trimCache(failureCache, FAILURE_CACHE_MAX_ENTRIES);
+  stats.failureCacheWrites++;
+  markStatsDirty();
+}
+
+function pruneFailureCache(now = Date.now()) {
+  for (const [key, entry] of failureCache.entries()) {
+    if (!entry || now >= Number(entry.expiresAt || 0)) failureCache.delete(key);
+  }
+}
+
+function failureCacheEntries(now = Date.now()) {
+  pruneFailureCache(now);
+  return [...failureCache.entries()].map(([key, entry]) => ({
+    key,
+    message: entry.message,
+    ageSeconds: Math.floor((now - entry.time) / 1000),
+    expiresInSeconds: Math.max(0, Math.floor((entry.expiresAt - now) / 1000))
+  }));
+}
+
+async function singleflightWithFailureCache(key, loader) {
+  throwCachedFailure(key);
+  return singleflight(key, () => loadWithFailureCache(key, loader));
 }
 
 async function singleflight(key, loader) {
@@ -1556,7 +1884,9 @@ function buildCacheStats() {
     caches: {
       viewEntries: viewCache.size,
       videoUrlEntries: videoUrlCache.size,
-      danmakuEntries: danmakuCache.size
+      danmakuEntries: danmakuCache.size,
+      failureEntries: failureCache.size,
+      rateLimitBuckets: rateLimitBuckets.size
     },
     hits: {
       view: cacheStats.view.hits,
@@ -1573,6 +1903,7 @@ function buildCacheStats() {
     ttlSeconds: {
       view: Math.floor(VIEW_CACHE_TTL_MS / 1000),
       videoUrl: Math.floor(VIDEO_URL_CACHE_TTL_MS / 1000),
+      failure: Math.floor(FAILURE_CACHE_TTL_MS / 1000),
       danmakuMemoryFallback: Math.floor(DANMAKU_CACHE_TTL_MS / 1000),
       danmakuDiskInitial: Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000),
       danmakuDiskRefresh: Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)
@@ -1580,6 +1911,7 @@ function buildCacheStats() {
     limits: {
       view: VIEW_CACHE_MAX_ENTRIES,
       videoUrl: VIDEO_URL_CACHE_MAX_ENTRIES,
+      failure: FAILURE_CACHE_MAX_ENTRIES,
       danmaku: DANMAKU_CACHE_MAX_ENTRIES,
       dashboardDanmaku: DASHBOARD_DANMAKU_MAX_ENTRIES,
       danmakuDiskDir: DANMAKU_DISK_CACHE_DIR
@@ -1593,8 +1925,27 @@ function buildCacheStats() {
       playerDanmakuRequests: stats.playerDanmakuRequests,
       apiDanmakuRequests: stats.apiDanmakuRequests,
       resolveRequests: stats.resolveRequests,
-      legacyRejected: stats.legacyRejected
+      unsupportedUrlRejected: stats.unsupportedUrlRejected,
+      legacyRejected: stats.legacyRejected,
+      rateLimited: stats.rateLimited,
+      failureCacheHits: stats.failureCacheHits,
+      failureCacheWrites: stats.failureCacheWrites,
+      upstreamTimeouts: stats.upstreamTimeouts,
+      upstreamErrors: stats.upstreamErrors
     },
+    rateLimit: {
+      windowSeconds: Math.floor(RATE_LIMIT_WINDOW_MS / 1000),
+      cooldownSeconds: Math.floor(RATE_LIMIT_COOLDOWN_MS / 1000),
+      policies: {
+        general: RATE_LIMIT_GENERAL,
+        home: RATE_LIMIT_HOME,
+        player: RATE_LIMIT_PLAYER,
+        apiDanmaku: RATE_LIMIT_API_DANMAKU,
+        apiResolve: RATE_LIMIT_API_RESOLVE,
+        cacheStats: RATE_LIMIT_CACHE_STATS
+      }
+    },
+    failureEntries: failureCacheEntries(now),
     danmakuEntries: [...danmakuCache.entries()].map(([key, entry]) => {
       const text = entry.value || "";
       return {
@@ -1708,6 +2059,10 @@ function renderDashboard() {
       <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
       <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
       <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
+      <div class="stat"><span>&#38480;&#27969;&#25318;&#25130;</span><strong>${formatCompactNumber(stats.rateLimited)}</strong><small>429 too many requests</small></div>
+      <div class="stat"><span>URL &#30333;&#21517;&#21333;&#25318;&#25130;</span><strong>${formatCompactNumber(stats.unsupportedUrlRejected)}</strong><small>unsupported_url</small></div>
+      <div class="stat"><span>&#22833;&#36133;&#32531;&#23384;</span><strong>${formatCompactNumber(stats.failureCacheHits)}</strong><small>${failureCache.size} active entries</small></div>
+      <div class="stat"><span>&#19978;&#28216;&#36229;&#26102;</span><strong>${formatCompactNumber(stats.upstreamTimeouts)}</strong><small>Bilibili/NetEase timeout</small></div>
     </section>
     <section class="panel">
       <h2>&#36816;&#34892;&#20449;&#24687;</h2>
@@ -1717,9 +2072,12 @@ function renderDashboard() {
         <code>view/video/danmaku cache: ${viewCache.size}/${videoUrlCache.size}/${danmakuCache.size}</code>
         <code>cache limits: ${VIEW_CACHE_MAX_ENTRIES}/${VIDEO_URL_CACHE_MAX_ENTRIES}/${DANMAKU_CACHE_MAX_ENTRIES}, dashboard: ${DASHBOARD_DANMAKU_MAX_ENTRIES}</code>
         <code>danmaku disk cache: initial ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000)))}, refresh ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)))}</code>
+        <code>rate limit: /player ${RATE_LIMIT_PLAYER}/${Math.floor(RATE_LIMIT_WINDOW_MS / 1000)}s, cooldown ${Math.floor(RATE_LIMIT_COOLDOWN_MS / 1000)}s</code>
+        <code>failure cache: ${failureCache.size}/${FAILURE_CACHE_MAX_ENTRIES}, ttl ${Math.floor(FAILURE_CACHE_TTL_MS / 1000)}s</code>
         <code>inflight: ${inflight.size}</code>
         <code>NetEase song/playlist: ${formatNumber(stats.neteaseSongRedirects)}/${formatNumber(stats.neteasePlaylistRedirects)}</code>
         <code>/api/resolve: ${stats.resolveRequests}</code>
+        <code>unsupported url rejected: ${stats.unsupportedUrlRejected}</code>
         <code>legacy rejected: ${stats.legacyRejected}</code>
       </div>
     </section>
@@ -1752,12 +2110,105 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
 }
 
+function checkRateLimit(req, requestUrl) {
+  const policy = rateLimitPolicy(requestUrl.pathname);
+  if (!policy.limit) return { allowed: true, retryAfterSeconds: 0 };
+
+  const now = Date.now();
+  pruneRateLimitBuckets(now);
+
+  const ip = getClientIp(req);
+  const key = `${policy.name}:${ip}`;
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    bucket = { windowStart: now, count: 0, blockedUntil: 0 };
+  }
+
+  if (bucket.blockedUntil && now < bucket.blockedUntil) {
+    rateLimitBuckets.set(key, bucket);
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((bucket.blockedUntil - now) / 1000))
+    };
+  }
+
+  bucket.count++;
+  if (bucket.count > policy.limit) {
+    bucket.blockedUntil = now + RATE_LIMIT_COOLDOWN_MS;
+    rateLimitBuckets.set(key, bucket);
+    console.warn("[rate-limited]", JSON.stringify({
+      ip,
+      path: requestUrl.pathname,
+      policy: policy.name,
+      limit: policy.limit,
+      windowSeconds: Math.floor(RATE_LIMIT_WINDOW_MS / 1000),
+      cooldownSeconds: Math.floor(RATE_LIMIT_COOLDOWN_MS / 1000)
+    }));
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil(RATE_LIMIT_COOLDOWN_MS / 1000))
+    };
+  }
+
+  rateLimitBuckets.set(key, bucket);
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function rateLimitPolicy(pathname) {
+  const path = String(pathname || "/").replace(/\/+$/, "") || "/";
+  if (path === "/health" || path === PAULKOI_LOGO_PATH) {
+    return { name: "light", limit: RATE_LIMIT_GENERAL };
+  }
+  if (path === "/") return { name: "home", limit: RATE_LIMIT_HOME };
+  if (path === "/player") return { name: "player", limit: RATE_LIMIT_PLAYER };
+  if (path === "/api/danmaku") return { name: "api-danmaku", limit: RATE_LIMIT_API_DANMAKU };
+  if (path === "/api/resolve") return { name: "api-resolve", limit: RATE_LIMIT_API_RESOLVE };
+  if (path === "/api/cache/stats") return { name: "cache-stats", limit: RATE_LIMIT_CACHE_STATS };
+  return { name: "general", limit: RATE_LIMIT_GENERAL };
+}
+
+function getClientIp(req) {
+  const cfIp = firstHeaderValue(req.headers["cf-connecting-ip"]);
+  if (cfIp) return cfIp;
+
+  const forwarded = firstHeaderValue(req.headers["x-forwarded-for"]);
+  if (forwarded) return forwarded;
+
+  return String(req.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
+}
+
+function firstHeaderValue(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return String(raw || "").split(",")[0].trim();
+}
+
+function pruneRateLimitBuckets(now = Date.now()) {
+  if (rateLimitBuckets.size <= 2000) return;
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    const expiredWindow = now - Number(bucket.windowStart || 0) > RATE_LIMIT_WINDOW_MS * 2;
+    const expiredBlock = !bucket.blockedUntil || now > Number(bucket.blockedUntil || 0) + RATE_LIMIT_WINDOW_MS;
+    if (expiredWindow && expiredBlock) rateLimitBuckets.delete(key);
+  }
+}
+
 function noStoreHeaders() {
   return { "Cache-Control": "no-store", "Pragma": "no-cache", "Expires": "0" };
 }
 
 function danmakuCacheHeaders() {
   return { "Cache-Control": "public, max-age=3600, s-maxage=86400" };
+}
+
+function sendWhitelistRejection(res, result) {
+  stats.unsupportedUrlRejected++;
+  markStatsDirty();
+  sendText(res, 400, [
+    "#YBDM/1",
+    `#error=${escapeField(result.error || "unsupported_url")}`,
+    `#host=${escapeField(result.host || "")}`,
+    `#path=${escapeField(result.path || "")}`,
+    ""
+  ].join("\n"), noStoreHeaders());
 }
 
 function sendText(res, status, body, extraHeaders = {}) {
@@ -1889,8 +2340,8 @@ function extractNeteaseId(candidate, type) {
 
   const path = String(candidate.pathname || "");
   const pattern = type === "playlist"
-    ? /\/(?:m\/)?playlist\/(\d+)/i
-    : /\/(?:m\/)?song\/(\d+)/i;
+    ? /\/(?:f\/|m\/)?playlist\/(\d+)/i
+    : /\/(?:f\/|m\/)?song\/(\d+)/i;
   const match = path.match(pattern);
   return match ? match[1] : "";
 }
