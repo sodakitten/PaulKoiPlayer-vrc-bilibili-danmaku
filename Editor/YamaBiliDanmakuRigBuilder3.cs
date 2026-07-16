@@ -1,3 +1,4 @@
+using System.IO;
 using TMPro;
 using UdonSharp;
 using UdonSharpEditor;
@@ -6,6 +7,7 @@ using UnityEditor.Events;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Events;
+using UnityEngine.TextCore.LowLevel;
 using UnityEngine.UI;
 using VRC.SDK3.Components;
 using VRC.Udon;
@@ -16,21 +18,48 @@ namespace YamaBiliDanmakuV3.Editor
   public static class YamaBiliDanmakuRigBuilder3
   {
     private const int PoolSize = 96;
+    private const int PagesButtonCount = 6;
     private const float CanvasWidth = 1750f;
     private const float CanvasHeight = 980f;
     private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?url=";
+    private const string DefaultPagesApiPrefix = DefaultUrlPrefix;
+    private const string DefaultVcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?vcrid=";
+    private const int DefaultVcridMax = 1000000;
     private const string DefaultPrefabPath = "Assets/YamaBiliDanmakuV3/Prefabs/Bili Danmaku Module.prefab";
     private const string OutlineMaterialPath = "Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku TMP Outline.mat";
     private const string ButtonMaterialPath = "Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku UI Button.mat";
+    private const string LegacyYouYuanFontAssetPath = "Assets/YamaBiliDanmakuV3/Generated/UI/YouYuan UI SDF.asset";
+    private const string GeneratedUiFontAssetPath = "Assets/YamaBiliDanmakuV3/Generated/UI/PaulKoi UI SDF.asset";
+    private const string BundledUiFontSourcePath = "Assets/YamaBiliDanmakuV3/Fonts/NotoSansSC-PaulKoiUI.otf";
+    private const string YamaUiFontSourcePath = "Packages/net.kwxxw.yama-stream/Assets/Fonts/ZenMaruGothic-Regular.ttf";
     private const string MirrorReadableShaderName = "YamaBiliDanmaku/TMP Mirror Readable";
     private const string ButtonShaderName = "YamaBiliDanmaku/UI Button";
     private const string ControlsCanvasName = "Danmaku Controls Canvas";
-    private const float ControlsWidth = 260f;
-    private const float ControlsHeight = 160f;
-    private const float ControlsPadding = 12f;
-    private const float ControlButtonWidth = 236f;
-    private const float ControlButtonHeight = 40f;
+    private const float ControlsWidth = 420f;
+    private const float ControlsHeight = 70f;
+    private const float ControlsPadding = 6f;
+    private const float ControlButtonWidth = 132f;
+    private const float ControlButtonHeight = 58f;
+    private const float ControlButtonGap = 6f;
     private const float ControlsLocalZ = -8f;
+    private const string PagesPanelName = "Bili Pages Panel";
+    private const float PagesPanelWidth = 420f;
+    private const float PagesPanelHeight = 258f;
+    private const float PagesPanelLocalZ = -8f;
+    private const float PagesHeaderActionWidth = 68f;
+    private const float PagesHeaderActionHeight = 37f;
+    private const float PagesHeaderRightPadding = 14f;
+    private const float PagesHeaderGap = 14f;
+    private const float PagesHeaderContentWidth = PagesPanelWidth - 24f - PagesHeaderActionWidth - PagesHeaderRightPadding - PagesHeaderGap;
+    private const string RoundedSpriteGuid = "cb6af20af8ed3f6438490dcef842bdde";
+    private const string DisplayAreaIconGuid = "23aa86979de8cf94db763545b72e0c9b";
+    private const string DanmakuIconGuid = "49e3e4d5882a85e4d8416c06d008c51f";
+    private const string UrlFillIconGuid = "ab97ea5771096a348a20dec1cac271dd";
+    private const string HomeIconGuid = "b2a21f86f3a3fd740befddbb73f80870";
+    private const string RepeatIconGuid = "e91c0974ef297f4499ff1d41531c4143";
+    private const string PreviousIconGuid = "ef9c13e59c2ab294a9c68c20e6f618bf";
+    private const string NextIconGuid = "4742737fe3b86d04d9a66a7fbdf4b7bb";
+    private const string DeleteIconGuid = "34a3c976457fe7447aeadabe9d1566dc";
     private const float DefaultOutlineWidth = 0.11f;
     private const float DefaultOutlineAlpha = 0.7f;
     private const float DefaultFaceDilate = 0.012f;
@@ -38,6 +67,13 @@ namespace YamaBiliDanmakuV3.Editor
     private const float DefaultWeightBold = 0.28f;
     private const float DefaultUnderlayDilate = 0.16f;
     private const float DefaultUnderlaySoftness = 0.03f;
+    private const string RequiredUiCharacters = "播放列表队首页顺序单项循环上一下弹幕区域全屏半四分之显示开关链接填充等待正在加载解析入删除保留终止第共视频已返回暂无持当前内容没有条展超时按未找到器控制切换为即将失败识别歌曲信息读取空目网易云后续最多所选效缺少地址录不存限变化请重试从同步清中名命可用的该称并稍候经0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-/:：·，。！？（）()[]<>｜ ";
+
+    private static readonly Color UiAccentColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f);
+    private static readonly Color UiTextColor = new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+    private static readonly Color UiMutedTextColor = new Color(200f / 255f, 180f / 255f, 154f / 255f, 0.76f);
+    private static readonly Color UiButtonColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.07f);
+    private static readonly Color UiDividerColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.28f);
 
     [MenuItem("Yamadev/YamaPlayer/Create Bili Danmaku Module", false, 2000)]
     public static void CreateRig()
@@ -228,6 +264,9 @@ namespace YamaBiliDanmakuV3.Editor
       Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(root, controller, urlPrefixToggleButtonLabel);
       WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
       WireModuleUrlPrefixControls(module, urlPrefixHelper, urlPrefixToggleButtonLabel, urlPrefixToggleButton);
+      Component pagesPlaylist = CreateOrFindPagesPlaylist(root, controller, module);
+      WirePagesPlaylist(pagesPlaylist, controller, module);
+      ApplyChineseUiFont(root);
 
       return root;
     }
@@ -260,6 +299,386 @@ namespace YamaBiliDanmakuV3.Editor
 
       WireUrlPrefixHelper(helper, controller, urlPrefixToggleButtonLabel);
       return helper;
+    }
+
+    private static Component CreateOrFindPagesPlaylist(GameObject root, Controller controller, Component module)
+    {
+      if (root == null) return null;
+
+      System.Type playlistType = FindType("YamaBiliDanmakuV3.YamaBiliPagesPlaylist3");
+      if (playlistType == null)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: YamaBiliPagesPlaylist3 type was not found. Pages panel was not created.");
+        return null;
+      }
+
+      EnsureUdonSharpProgramAsset(playlistType);
+
+      Transform panelTransform = root.transform.Find(PagesPanelName);
+      GameObject panelObject = panelTransform == null ? null : panelTransform.gameObject;
+      if (panelObject == null)
+      {
+        panelObject = new GameObject(PagesPanelName, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        panelObject.transform.SetParent(root.transform, false);
+      }
+
+      panelObject.layer = 0;
+      RectTransform panelRect = panelObject.GetComponent<RectTransform>();
+      panelRect.anchorMin = new Vector2(1f, 1f);
+      panelRect.anchorMax = new Vector2(1f, 1f);
+      panelRect.pivot = new Vector2(0f, 1f);
+      panelRect.anchoredPosition = new Vector2(24f, -100f);
+      panelRect.sizeDelta = new Vector2(PagesPanelWidth, PagesPanelHeight);
+      Vector3 localPosition = panelRect.localPosition;
+      localPosition.z = PagesPanelLocalZ;
+      panelRect.localPosition = localPosition;
+      panelRect.localRotation = Quaternion.identity;
+      panelRect.localScale = Vector3.one;
+
+      Canvas canvas = panelObject.GetComponent<Canvas>();
+      if (canvas == null) canvas = panelObject.AddComponent<Canvas>();
+      canvas.renderMode = RenderMode.WorldSpace;
+      canvas.overrideSorting = true;
+      canvas.sortingOrder = 36;
+
+      CanvasScaler scaler = panelObject.GetComponent<CanvasScaler>();
+      if (scaler == null) scaler = panelObject.AddComponent<CanvasScaler>();
+      scaler.dynamicPixelsPerUnit = 10f;
+
+      GraphicRaycaster raycaster = panelObject.GetComponent<GraphicRaycaster>();
+      if (raycaster == null) raycaster = panelObject.AddComponent<GraphicRaycaster>();
+      raycaster.ignoreReversedGraphics = true;
+
+      EnsureVrcUiShape(panelObject);
+      BoxCollider collider = panelObject.GetComponent<BoxCollider>();
+      if (collider == null) collider = panelObject.AddComponent<BoxCollider>();
+      collider.isTrigger = true;
+      collider.center = new Vector3(PagesPanelWidth * 0.5f, -PagesPanelHeight * 0.5f, 0f);
+      collider.size = new Vector3(PagesPanelWidth + 24f, PagesPanelHeight + 24f, 2f);
+
+      CreateOrFindStyledBackground(panelObject);
+      RectTransform titleRect;
+      RectTransform titleViewportRect;
+      TextMeshProUGUI titleLabel = CreateOrFindMarqueeTitle(panelObject, out titleRect, out titleViewportRect);
+      TextMeshProUGUI statusLabel = CreateOrFindPanelLabel(panelObject, "Status", new Vector2(18f, -37f), new Vector2(PagesHeaderContentWidth + 6f, 17f), "等待播放队列", 12f, TextAlignmentOptions.Left);
+      Button clearQueueButton;
+      TextMeshProUGUI clearQueueLabel;
+      CreateOrFindPanelButton(
+        panelObject,
+        "Clear Queue Button",
+        new Vector2(PagesPanelWidth - PagesHeaderRightPadding - PagesHeaderActionWidth, -12f),
+        PagesHeaderActionWidth,
+        PagesHeaderActionHeight,
+        "清空",
+        11f,
+        out clearQueueButton,
+        out clearQueueLabel,
+        DeleteIconGuid);
+
+      TextMeshProUGUI[] pageLabels = new TextMeshProUGUI[PagesButtonCount];
+      Button[] pageButtons = new Button[PagesButtonCount];
+      Button[] deleteButtons = new Button[PagesButtonCount];
+      Image[] deleteIcons = new Image[PagesButtonCount];
+      for (int i = 0; i < PagesButtonCount; i++)
+      {
+        Button button;
+        TextMeshProUGUI label;
+        string buttonName = "Page Button " + i;
+        CleanupPageItemMarquee(panelObject, buttonName);
+        CreateOrFindPanelButton(panelObject, buttonName, new Vector2(14f, -58f - i * 25f), PagesPanelWidth - 28f, 22f, "--", 13f, out button, out label);
+        RectTransform labelRect = label.GetComponent<RectTransform>();
+        labelRect.offsetMax = new Vector2(-31f, labelRect.offsetMax.y);
+        CreateOrFindDeleteControl(button.gameObject, out deleteButtons[i], out deleteIcons[i]);
+        pageButtons[i] = button;
+        pageLabels[i] = label;
+      }
+
+      Button previousButton;
+      TextMeshProUGUI previousLabel;
+      Button nextButton;
+      TextMeshProUGUI nextLabel;
+      Button refreshButton;
+      TextMeshProUGUI refreshLabel;
+      Button playModeButton;
+      TextMeshProUGUI playModeLabel;
+      CreateOrFindNavigationShell(panelObject);
+      CreateOrFindPanelButton(panelObject, "Refresh Button", new Vector2(14f, -218f), 98f, 28f, "首页", 13f, out refreshButton, out refreshLabel, HomeIconGuid, true);
+      CreateOrFindPanelButton(panelObject, "Play Mode Button", new Vector2(112f, -218f), 98f, 28f, "顺序播放", 13f, out playModeButton, out playModeLabel, RepeatIconGuid, true);
+      CreateOrFindPanelButton(panelObject, "Previous Button", new Vector2(210f, -218f), 98f, 28f, "上一页", 13f, out previousButton, out previousLabel, PreviousIconGuid, true);
+      CreateOrFindPanelButton(panelObject, "Next Button", new Vector2(308f, -218f), 98f, 28f, "下一页", 13f, out nextButton, out nextLabel, NextIconGuid, true, true);
+      CreateOrFindSeparator(panelObject, "Navigation Divider 1", new Vector2(112f, -232f), new Vector2(1f, 16f));
+      CreateOrFindSeparator(panelObject, "Navigation Divider 2", new Vector2(210f, -232f), new Vector2(1f, 16f));
+      CreateOrFindSeparator(panelObject, "Navigation Divider 3", new Vector2(308f, -232f), new Vector2(1f, 16f));
+
+      Component playlist = panelObject.GetComponent(playlistType);
+      if (playlist == null)
+      {
+        playlist = AddUdonSharpComponentForType(panelObject, playlistType);
+      }
+
+      if (playlist == null)
+      {
+        Debug.LogWarning("Yama Bili Danmaku: failed to add Pages playlist.");
+        return null;
+      }
+
+      WirePagesPlaylistReferences(playlist, controller, module, titleLabel, titleRect, titleViewportRect, statusLabel, playModeLabel, pageLabels, deleteIcons);
+      AddModuleButtonClick(previousButton, playlist, "PreviousPage");
+      AddModuleButtonClick(nextButton, playlist, "NextPage");
+      AddModuleButtonClick(refreshButton, playlist, "RefreshPages");
+      AddModuleButtonClick(playModeButton, playlist, "TogglePlaybackMode");
+      AddModuleButtonClick(clearQueueButton, playlist, "ClearUnifiedQueue");
+      for (int i = 0; i < PagesButtonCount; i++)
+      {
+        AddModuleButtonClick(pageButtons[i], playlist, "SelectPage" + i);
+        AddModuleButtonClick(deleteButtons[i], playlist, "DeleteVisible" + i);
+      }
+
+      SetLayerRecursively(panelObject, 0);
+      ApplyChineseUiFontToObject(panelObject, FindChineseUiFont());
+      return playlist;
+    }
+
+    private static TextMeshProUGUI CreateOrFindPanelLabel(GameObject panelObject, string objectName, Vector2 anchoredPosition, Vector2 size, string text, float fontSize, TextAlignmentOptions alignment)
+    {
+      GameObject labelObject = CreateOrFindChild(panelObject, objectName, typeof(RectTransform), typeof(TextMeshProUGUI));
+      RectTransform rect = labelObject.GetComponent<RectTransform>();
+      rect.anchorMin = new Vector2(0f, 1f);
+      rect.anchorMax = new Vector2(0f, 1f);
+      rect.pivot = new Vector2(0f, 1f);
+      rect.anchoredPosition = anchoredPosition;
+      rect.sizeDelta = size;
+      rect.localRotation = Quaternion.identity;
+      rect.localScale = Vector3.one;
+
+      TextMeshProUGUI label = labelObject.GetComponent<TextMeshProUGUI>();
+      label.raycastTarget = false;
+      label.alignment = alignment;
+      label.fontSize = fontSize;
+      label.fontStyle = FontStyles.Bold;
+      label.enableWordWrapping = false;
+      label.overflowMode = TextOverflowModes.Ellipsis;
+      label.richText = false;
+      label.parseCtrlCharacters = false;
+      label.color = UiMutedTextColor;
+      label.text = text;
+      return label;
+    }
+
+    private static void CreateOrFindPanelButton(GameObject panelObject, string objectName, Vector2 anchoredPosition, float width, float height, string labelText, float fontSize, out Button button, out TextMeshProUGUI label, string iconGuid = null, bool navigationStyle = false, bool iconOnRight = false)
+    {
+      button = null;
+      label = null;
+      if (panelObject == null) return;
+
+      Transform buttonTransform = panelObject.transform.Find(objectName);
+      GameObject buttonObject = buttonTransform == null ? null : buttonTransform.gameObject;
+      if (buttonObject == null)
+      {
+        buttonObject = new GameObject(objectName, typeof(RectTransform), typeof(Image), typeof(Button));
+        buttonObject.transform.SetParent(panelObject.transform, false);
+      }
+
+      RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+      buttonRect.anchorMin = new Vector2(0f, 1f);
+      buttonRect.anchorMax = new Vector2(0f, 1f);
+      buttonRect.pivot = new Vector2(0f, 1f);
+      buttonRect.anchoredPosition = anchoredPosition;
+      buttonRect.sizeDelta = new Vector2(width, height);
+      buttonRect.localRotation = Quaternion.identity;
+      buttonRect.localScale = Vector3.one;
+
+      Image image = buttonObject.GetComponent<Image>();
+      if (image == null) image = buttonObject.AddComponent<Image>();
+      image.color = navigationStyle ? new Color(UiAccentColor.r, UiAccentColor.g, UiAccentColor.b, 0.025f) : UiButtonColor;
+      image.raycastTarget = true;
+      image.sprite = navigationStyle ? null : GetRoundedUiSprite();
+      image.type = image.sprite == null ? Image.Type.Simple : Image.Type.Sliced;
+      image.pixelsPerUnitMultiplier = navigationStyle ? 1f : 2f;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) image.material = material;
+
+      button = buttonObject.GetComponent<Button>();
+      if (button == null) button = buttonObject.AddComponent<Button>();
+      button.interactable = true;
+      button.targetGraphic = image;
+      button.transition = Selectable.Transition.ColorTint;
+      ColorBlock colors = button.colors;
+      colors.normalColor = Color.white;
+      colors.highlightedColor = new Color(1f, 0.9f, 0.74f, 1f);
+      colors.pressedColor = new Color(0.82f, 0.68f, 0.52f, 1f);
+      colors.selectedColor = colors.highlightedColor;
+      colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+      button.colors = colors;
+      Navigation navigation = button.navigation;
+      navigation.mode = Navigation.Mode.None;
+      button.navigation = navigation;
+
+      Transform labelTransform = buttonObject.transform.Find("Label");
+      GameObject labelObject = labelTransform == null ? null : labelTransform.gameObject;
+      if (labelObject == null)
+      {
+        labelObject = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
+        labelObject.transform.SetParent(buttonObject.transform, false);
+      }
+
+      RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+      labelRect.anchorMin = Vector2.zero;
+      labelRect.anchorMax = Vector2.one;
+      labelRect.offsetMin = string.IsNullOrEmpty(iconGuid) || iconOnRight ? new Vector2(5f, 0f) : new Vector2(25f, 0f);
+      labelRect.offsetMax = iconOnRight ? new Vector2(-25f, 0f) : new Vector2(-5f, 0f);
+      labelRect.localRotation = Quaternion.identity;
+      labelRect.localScale = Vector3.one;
+
+      label = labelObject.GetComponent<TextMeshProUGUI>();
+      label.raycastTarget = false;
+      label.alignment = TextAlignmentOptions.Center;
+      label.fontSize = fontSize;
+      label.fontStyle = FontStyles.Bold;
+      label.enableWordWrapping = false;
+      label.overflowMode = TextOverflowModes.Ellipsis;
+      label.richText = false;
+      label.parseCtrlCharacters = false;
+      label.enableAutoSizing = navigationStyle;
+      label.fontSizeMin = 9f;
+      label.fontSizeMax = fontSize;
+      label.color = UiTextColor;
+      label.text = labelText;
+      CreateOrFindButtonIcon(buttonObject, iconGuid, navigationStyle ? 14f : 18f, navigationStyle ? 7f : 8f, iconOnRight);
+    }
+
+    private static void CreateOrFindDeleteControl(GameObject rowObject, out Button deleteButton, out Image deleteIcon)
+    {
+      deleteButton = null;
+      deleteIcon = null;
+      if (rowObject == null) return;
+
+      GameObject hotspotObject = CreateOrFindChild(rowObject, "Delete Hotspot", typeof(RectTransform), typeof(Image), typeof(Button));
+      hotspotObject.transform.SetAsLastSibling();
+      RectTransform hotspotRect = hotspotObject.GetComponent<RectTransform>();
+      hotspotRect.anchorMin = new Vector2(1f, 0f);
+      hotspotRect.anchorMax = new Vector2(1f, 1f);
+      hotspotRect.pivot = new Vector2(1f, 0.5f);
+      hotspotRect.anchoredPosition = Vector2.zero;
+      hotspotRect.sizeDelta = new Vector2(30f, 0f);
+      hotspotRect.localRotation = Quaternion.identity;
+      hotspotRect.localScale = Vector3.one;
+
+      Image hotspotImage = hotspotObject.GetComponent<Image>();
+      hotspotImage.sprite = null;
+      hotspotImage.type = Image.Type.Simple;
+      hotspotImage.color = new Color(0f, 0f, 0f, 0f);
+      hotspotImage.raycastTarget = true;
+
+      deleteButton = hotspotObject.GetComponent<Button>();
+      deleteButton.targetGraphic = hotspotImage;
+      deleteButton.transition = Selectable.Transition.None;
+      deleteButton.interactable = true;
+      Navigation navigation = deleteButton.navigation;
+      navigation.mode = Navigation.Mode.None;
+      deleteButton.navigation = navigation;
+
+      GameObject iconObject = CreateOrFindChild(hotspotObject, "Icon", typeof(RectTransform), typeof(Image));
+      RectTransform iconRect = iconObject.GetComponent<RectTransform>();
+      iconRect.anchorMin = new Vector2(0.5f, 0.5f);
+      iconRect.anchorMax = new Vector2(0.5f, 0.5f);
+      iconRect.pivot = new Vector2(0.5f, 0.5f);
+      iconRect.anchoredPosition = Vector2.zero;
+      iconRect.sizeDelta = new Vector2(13f, 13f);
+      iconRect.localRotation = Quaternion.identity;
+      iconRect.localScale = Vector3.one;
+
+      deleteIcon = iconObject.GetComponent<Image>();
+      deleteIcon.sprite = LoadSpriteByGuid(DeleteIconGuid);
+      deleteIcon.preserveAspect = true;
+      deleteIcon.raycastTarget = false;
+      deleteIcon.color = UiAccentColor;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) deleteIcon.material = material;
+      iconObject.SetActive(deleteIcon.sprite != null);
+    }
+
+    private static void AddHoverCustomEvents(GameObject target, Component receiver, string enterEvent, string exitEvent)
+    {
+      if (target == null || receiver == null) return;
+      UdonSharpBehaviour behaviour = receiver as UdonSharpBehaviour;
+      if (behaviour == null) return;
+
+      EventTrigger trigger = target.GetComponent<EventTrigger>();
+      if (trigger == null) trigger = target.AddComponent<EventTrigger>();
+      if (trigger.triggers == null) trigger.triggers = new System.Collections.Generic.List<EventTrigger.Entry>();
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.PointerEnter, behaviour, enterEvent);
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.PointerExit, behaviour, exitEvent);
+      EditorUtility.SetDirty(trigger);
+    }
+
+    private static TextMeshProUGUI CreateOrFindMarqueeTitle(GameObject panelObject, out RectTransform titleRect, out RectTransform viewportRect)
+    {
+      titleRect = null;
+      viewportRect = null;
+      if (panelObject == null) return null;
+
+      Transform legacyTitle = panelObject.transform.Find("Title");
+      if (legacyTitle != null) UnityEngine.Object.DestroyImmediate(legacyTitle.gameObject);
+
+      GameObject viewportObject = CreateOrFindChild(panelObject, "Title Viewport", typeof(RectTransform), typeof(Image), typeof(Mask));
+      DestroyComponent<RectMask2D>(viewportObject);
+      viewportRect = viewportObject.GetComponent<RectTransform>();
+      viewportRect.anchorMin = new Vector2(0f, 1f);
+      viewportRect.anchorMax = new Vector2(0f, 1f);
+      viewportRect.pivot = new Vector2(0f, 1f);
+      viewportRect.anchoredPosition = new Vector2(24f, -12f);
+      viewportRect.sizeDelta = new Vector2(PagesHeaderContentWidth, 24f);
+      viewportRect.localRotation = Quaternion.identity;
+      viewportRect.localScale = Vector3.one;
+
+      Image viewportImage = viewportObject.GetComponent<Image>();
+      viewportImage.sprite = null;
+      viewportImage.material = GetOrCreateButtonMaterial();
+      viewportImage.color = Color.white;
+      viewportImage.raycastTarget = false;
+      Mask viewportMask = viewportObject.GetComponent<Mask>();
+      viewportMask.showMaskGraphic = false;
+
+      GameObject titleObject = CreateOrFindChild(viewportObject, "Title", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+      titleRect = titleObject.GetComponent<RectTransform>();
+      titleRect.anchorMin = new Vector2(0f, 0f);
+      titleRect.anchorMax = new Vector2(0f, 1f);
+      titleRect.pivot = new Vector2(0f, 1f);
+      titleRect.anchoredPosition = Vector2.zero;
+      titleRect.sizeDelta = new Vector2(0f, 0f);
+      titleRect.localRotation = Quaternion.identity;
+      titleRect.localScale = Vector3.one;
+
+      ContentSizeFitter fitter = titleObject.GetComponent<ContentSizeFitter>();
+      fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+      fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+      TextMeshProUGUI titleLabel = titleObject.GetComponent<TextMeshProUGUI>();
+      titleLabel.raycastTarget = false;
+      titleLabel.alignment = TextAlignmentOptions.Left;
+      titleLabel.fontSize = 17f;
+      titleLabel.fontStyle = FontStyles.Bold;
+      titleLabel.enableWordWrapping = false;
+      titleLabel.overflowMode = TextOverflowModes.Overflow;
+      titleLabel.richText = false;
+      titleLabel.parseCtrlCharacters = false;
+      titleLabel.maskable = true;
+      titleLabel.color = UiAccentColor;
+      titleLabel.text = "播放队列";
+      return titleLabel;
+    }
+
+    private static void CleanupPageItemMarquee(GameObject panelObject, string buttonName)
+    {
+      if (panelObject == null) return;
+      Transform button = panelObject.transform.Find(buttonName);
+      if (button == null) return;
+
+      Transform prefix = button.Find("Prefix");
+      if (prefix != null) UnityEngine.Object.DestroyImmediate(prefix.gameObject);
+      Transform viewport = button.Find("Title Viewport");
+      if (viewport != null) UnityEngine.Object.DestroyImmediate(viewport.gameObject);
     }
 
     private static void CreateOrFindControlsCanvas(GameObject root, out Button displayAreaButton, out TextMeshProUGUI displayAreaButtonLabel, out Button danmakuToggleButton, out TextMeshProUGUI danmakuToggleButtonLabel, out Button urlPrefixToggleButton, out TextMeshProUGUI urlPrefixToggleButtonLabel)
@@ -318,30 +737,214 @@ namespace YamaBiliDanmakuV3.Editor
       collider.center = new Vector3(ControlsWidth * 0.5f, -ControlsHeight * 0.5f, 0f);
       collider.size = new Vector3(ControlsWidth + 24f, ControlsHeight + 24f, 2f);
 
-      CreateOrFindControlsBackground(controlsObject);
-      CreateOrFindCycleButton(controlsObject, "Display Area Button", new Vector2(ControlsPadding, -ControlsPadding), "Danmaku: Full", out displayAreaButton, out displayAreaButtonLabel);
-      CreateOrFindCycleButton(controlsObject, "Danmaku Toggle Button", new Vector2(ControlsPadding, -(ControlsPadding + ControlButtonHeight + 8f)), "Danmaku: On", out danmakuToggleButton, out danmakuToggleButtonLabel);
-      CreateOrFindCycleButton(controlsObject, "URL Prefix Toggle Button", new Vector2(ControlsPadding, -(ControlsPadding + (ControlButtonHeight + 8f) * 2f)), "URL Fill: On", out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
+      CreateOrFindStyledBackground(controlsObject);
+      CreateOrFindCycleButton(controlsObject, "Display Area Button", new Vector2(ControlsPadding, -ControlsPadding), "弹幕区域：全屏", DisplayAreaIconGuid, out displayAreaButton, out displayAreaButtonLabel);
+      CreateOrFindCycleButton(controlsObject, "Danmaku Toggle Button", new Vector2(ControlsPadding + ControlButtonWidth + ControlButtonGap, -ControlsPadding), "弹幕显示：开", DanmakuIconGuid, out danmakuToggleButton, out danmakuToggleButtonLabel);
+      Transform legacyUrlToggle = controlsObject.transform.Find("URL Prefix Toggle Button");
+      if (legacyUrlToggle != null) UnityEngine.Object.DestroyImmediate(legacyUrlToggle.gameObject);
+      CreateOrFindQueueUrlInput(controlsObject);
+      CreateOrFindSeparator(controlsObject, "Control Divider 1", new Vector2(141f, -35f), new Vector2(1f, 34f));
+      CreateOrFindSeparator(controlsObject, "Control Divider 2", new Vector2(279f, -35f), new Vector2(1f, 34f));
       SetLayerRecursively(controlsObject, 0);
+      ApplyChineseUiFontToObject(controlsObject, FindChineseUiFont());
     }
 
-    private static void CreateOrFindControlsBackground(GameObject controlsObject)
+    private static VRCUrlInputField CreateOrFindQueueUrlInput(GameObject controlsObject)
     {
-      GameObject backgroundObject = CreateOrFindChild(controlsObject, "BG", typeof(RectTransform), typeof(Image));
+      if (controlsObject == null) return null;
+
+      GameObject inputObject = CreateOrFindChild(controlsObject, "Queue URL Input", typeof(RectTransform), typeof(Image), typeof(Mask), typeof(VRCUrlInputField));
+      DestroyComponent<RectMask2D>(inputObject);
+      RectTransform inputRect = inputObject.GetComponent<RectTransform>();
+      inputRect.anchorMin = new Vector2(0f, 1f);
+      inputRect.anchorMax = new Vector2(0f, 1f);
+      inputRect.pivot = new Vector2(0f, 1f);
+      inputRect.anchoredPosition = new Vector2(ControlsPadding + (ControlButtonWidth + ControlButtonGap) * 2f, -ControlsPadding);
+      inputRect.sizeDelta = new Vector2(ControlButtonWidth, ControlButtonHeight);
+      inputRect.localRotation = Quaternion.identity;
+      inputRect.localScale = Vector3.one;
+
+      Image background = inputObject.GetComponent<Image>();
+      background.sprite = null;
+      background.type = Image.Type.Simple;
+      background.color = new Color(UiAccentColor.r, UiAccentColor.g, UiAccentColor.b, 0.025f);
+      background.raycastTarget = true;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) background.material = material;
+
+      Mask inputMask = inputObject.GetComponent<Mask>();
+      inputMask.showMaskGraphic = true;
+
+      GameObject textObject = CreateOrFindChild(inputObject, "Text", typeof(RectTransform), typeof(Text));
+      RectTransform textRect = textObject.GetComponent<RectTransform>();
+      textRect.anchorMin = new Vector2(0f, 0f);
+      textRect.anchorMax = new Vector2(1f, 0f);
+      textRect.pivot = new Vector2(0.5f, 0f);
+      textRect.anchoredPosition = new Vector2(0f, 4f);
+      textRect.sizeDelta = new Vector2(-8f, 20f);
+      textRect.localRotation = Quaternion.identity;
+      textRect.localScale = Vector3.one;
+
+      Font legacyFont = FindLegacyUiFont();
+      Text inputText = textObject.GetComponent<Text>();
+      inputText.font = legacyFont;
+      inputText.fontSize = 12;
+      inputText.fontStyle = FontStyle.Bold;
+      inputText.alignment = TextAnchor.MiddleCenter;
+      inputText.horizontalOverflow = HorizontalWrapMode.Overflow;
+      inputText.verticalOverflow = VerticalWrapMode.Truncate;
+      inputText.supportRichText = false;
+      inputText.color = UiTextColor;
+      inputText.raycastTarget = false;
+      inputText.text = "";
+
+      GameObject placeholderObject = CreateOrFindChild(inputObject, "Placeholder", typeof(RectTransform), typeof(Text));
+      RectTransform placeholderRect = placeholderObject.GetComponent<RectTransform>();
+      placeholderRect.anchorMin = new Vector2(0f, 0f);
+      placeholderRect.anchorMax = new Vector2(1f, 0f);
+      placeholderRect.pivot = new Vector2(0.5f, 0f);
+      placeholderRect.anchoredPosition = new Vector2(0f, 4f);
+      placeholderRect.sizeDelta = new Vector2(-8f, 20f);
+      placeholderRect.localRotation = Quaternion.identity;
+      placeholderRect.localScale = Vector3.one;
+
+      Text placeholder = placeholderObject.GetComponent<Text>();
+      placeholder.font = legacyFont;
+      placeholder.fontSize = 12;
+      placeholder.fontStyle = FontStyle.Bold;
+      placeholder.alignment = TextAnchor.MiddleCenter;
+      placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
+      placeholder.verticalOverflow = VerticalWrapMode.Truncate;
+      placeholder.supportRichText = false;
+      placeholder.color = UiAccentColor;
+      placeholder.raycastTarget = false;
+      placeholder.text = "视频链接";
+
+      GameObject idleLabelObject = CreateOrFindChild(inputObject, "Idle Label", typeof(RectTransform), typeof(Text));
+      RectTransform idleLabelRect = idleLabelObject.GetComponent<RectTransform>();
+      idleLabelRect.anchorMin = new Vector2(0f, 0f);
+      idleLabelRect.anchorMax = new Vector2(1f, 0f);
+      idleLabelRect.pivot = new Vector2(0.5f, 0f);
+      idleLabelRect.anchoredPosition = new Vector2(0f, 4f);
+      idleLabelRect.sizeDelta = new Vector2(-8f, 20f);
+      idleLabelRect.localRotation = Quaternion.identity;
+      idleLabelRect.localScale = Vector3.one;
+
+      Text idleLabel = idleLabelObject.GetComponent<Text>();
+      idleLabel.font = legacyFont;
+      idleLabel.fontSize = 12;
+      idleLabel.fontStyle = FontStyle.Bold;
+      idleLabel.alignment = TextAnchor.MiddleCenter;
+      idleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+      idleLabel.verticalOverflow = VerticalWrapMode.Truncate;
+      idleLabel.supportRichText = false;
+      idleLabel.color = UiAccentColor;
+      idleLabel.raycastTarget = false;
+      idleLabel.text = "视频链接";
+
+      GameObject iconObject = CreateOrFindChild(inputObject, "Icon", typeof(RectTransform), typeof(Image));
+      RectTransform iconRect = iconObject.GetComponent<RectTransform>();
+      iconRect.anchorMin = new Vector2(0.5f, 1f);
+      iconRect.anchorMax = new Vector2(0.5f, 1f);
+      iconRect.pivot = new Vector2(0.5f, 1f);
+      iconRect.anchoredPosition = new Vector2(0f, -5f);
+      iconRect.sizeDelta = new Vector2(26f, 26f);
+      iconRect.localRotation = Quaternion.identity;
+      iconRect.localScale = Vector3.one;
+
+      Image icon = iconObject.GetComponent<Image>();
+      icon.sprite = LoadSpriteByGuid(UrlFillIconGuid);
+      icon.color = UiAccentColor;
+      icon.raycastTarget = false;
+      icon.preserveAspect = true;
+      if (material != null) icon.material = material;
+      iconObject.SetActive(icon.sprite != null);
+
+      VRCUrlInputField inputField = inputObject.GetComponent<VRCUrlInputField>();
+      SerializedObject serialized = new SerializedObject(inputField);
+      SerializedProperty targetGraphic = serialized.FindProperty("m_TargetGraphic");
+      if (targetGraphic != null) targetGraphic.objectReferenceValue = background;
+      SerializedProperty textComponent = serialized.FindProperty("m_TextComponent");
+      if (textComponent != null) textComponent.objectReferenceValue = inputText;
+      SerializedProperty placeholderProperty = serialized.FindProperty("m_Placeholder");
+      if (placeholderProperty != null) placeholderProperty.objectReferenceValue = placeholder;
+      SetBool(serialized, "m_Interactable", true);
+      SetBool(serialized, "m_ReadOnly", false);
+      SetBool(serialized, "m_ShouldActivateOnSelect", true);
+      SetBool(serialized, "AllowSendingOnEndEdit", true);
+      SetInt(serialized, "m_LineType", 0);
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+
+      SetLayerRecursively(inputObject, 0);
+      return inputField;
+    }
+
+    private static Font FindLegacyUiFont()
+    {
+      Font bundledFont = FindUiSourceFont();
+      if (bundledFont != null) return bundledFont;
+      return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+    }
+
+    private static Font FindUiSourceFont()
+    {
+      Font bundledFont = AssetDatabase.LoadAssetAtPath<Font>(BundledUiFontSourcePath);
+      if (bundledFont != null) return bundledFont;
+
+      Font yamaFont = AssetDatabase.LoadAssetAtPath<Font>(YamaUiFontSourcePath);
+      if (yamaFont != null) return yamaFont;
+
+      string[] guids = AssetDatabase.FindAssets("ZenMaruGothic-Regular t:Font");
+      for (int i = 0; i < guids.Length; i++)
+      {
+        string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+        Font font = AssetDatabase.LoadAssetAtPath<Font>(path);
+        if (font != null) return font;
+      }
+      return null;
+    }
+
+    private static void CreateOrFindStyledBackground(GameObject controlsObject)
+    {
+      GameObject backgroundObject = CreateOrFindChild(controlsObject, "BG", typeof(RectTransform));
       backgroundObject.transform.SetAsFirstSibling();
       RectTransform backgroundRect = backgroundObject.GetComponent<RectTransform>();
       backgroundRect.anchorMin = Vector2.zero;
       backgroundRect.anchorMax = Vector2.one;
       backgroundRect.offsetMin = Vector2.zero;
       backgroundRect.offsetMax = Vector2.zero;
-      Image background = backgroundObject.GetComponent<Image>();
-      background.color = new Color(0f, 0f, 0f, 0.38f);
-      background.raycastTarget = true;
+      DestroyComponent<RawImage>(backgroundObject);
+
+      Sprite rounded = GetRoundedUiSprite();
       Material material = GetOrCreateButtonMaterial();
-      if (material != null) background.material = material;
+      Image frame = backgroundObject.GetComponent<Image>();
+      if (frame == null) frame = backgroundObject.AddComponent<Image>();
+      frame.sprite = rounded;
+      frame.type = rounded == null ? Image.Type.Simple : Image.Type.Sliced;
+      frame.pixelsPerUnitMultiplier = 2f;
+      frame.color = UiAccentColor;
+      frame.raycastTarget = true;
+      if (material != null) frame.material = material;
+
+      GameObject fillObject = CreateOrFindChild(backgroundObject, "Fill", typeof(RectTransform), typeof(Image));
+      RectTransform fillRect = fillObject.GetComponent<RectTransform>();
+      fillRect.anchorMin = Vector2.zero;
+      fillRect.anchorMax = Vector2.one;
+      fillRect.offsetMin = new Vector2(2f, 2f);
+      fillRect.offsetMax = new Vector2(-2f, -2f);
+      fillRect.localRotation = Quaternion.identity;
+      fillRect.localScale = Vector3.one;
+
+      Image fill = fillObject.GetComponent<Image>();
+      fill.sprite = rounded;
+      fill.type = rounded == null ? Image.Type.Simple : Image.Type.Sliced;
+      fill.pixelsPerUnitMultiplier = 2f;
+      fill.color = new Color(0.012f, 0.011f, 0.016f, 0.985f);
+      fill.raycastTarget = false;
+      if (material != null) fill.material = material;
     }
 
-    private static void CreateOrFindCycleButton(GameObject controlsObject, string objectName, Vector2 anchoredPosition, string labelText, out Button button, out TextMeshProUGUI label)
+    private static void CreateOrFindCycleButton(GameObject controlsObject, string objectName, Vector2 anchoredPosition, string labelText, string iconGuid, out Button button, out TextMeshProUGUI label)
     {
       button = null;
       label = null;
@@ -370,8 +973,10 @@ namespace YamaBiliDanmakuV3.Editor
 
       Image image = buttonObject.GetComponent<Image>();
       if (image == null) image = buttonObject.AddComponent<Image>();
-      image.color = new Color(0f, 0f, 0f, 0.62f);
+      image.color = new Color(UiAccentColor.r, UiAccentColor.g, UiAccentColor.b, 0.025f);
       image.raycastTarget = true;
+      image.sprite = null;
+      image.type = Image.Type.Simple;
       Material material = GetOrCreateButtonMaterial();
       if (material != null) image.material = material;
 
@@ -382,8 +987,8 @@ namespace YamaBiliDanmakuV3.Editor
       button.transition = Selectable.Transition.ColorTint;
       ColorBlock colors = button.colors;
       colors.normalColor = Color.white;
-      colors.highlightedColor = new Color(0.82f, 0.92f, 1f, 1f);
-      colors.pressedColor = new Color(0.58f, 0.78f, 1f, 1f);
+      colors.highlightedColor = new Color(1f, 0.9f, 0.74f, 1f);
+      colors.pressedColor = new Color(0.82f, 0.68f, 0.52f, 1f);
       colors.selectedColor = colors.highlightedColor;
       colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
       button.colors = colors;
@@ -400,22 +1005,153 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       RectTransform labelRect = labelObject.GetComponent<RectTransform>();
-      labelRect.anchorMin = Vector2.zero;
-      labelRect.anchorMax = Vector2.one;
-      labelRect.offsetMin = Vector2.zero;
-      labelRect.offsetMax = Vector2.zero;
+      labelRect.anchorMin = new Vector2(0f, 0f);
+      labelRect.anchorMax = new Vector2(1f, 0f);
+      labelRect.pivot = new Vector2(0.5f, 0f);
+      labelRect.anchoredPosition = new Vector2(0f, 4f);
+      labelRect.sizeDelta = new Vector2(-8f, 20f);
       labelRect.localRotation = Quaternion.identity;
       labelRect.localScale = Vector3.one;
 
       label = labelObject.GetComponent<TextMeshProUGUI>();
-      label.raycastTarget = true;
+      label.raycastTarget = false;
       label.alignment = TextAlignmentOptions.Center;
-      label.fontSize = 18f;
+      label.fontSize = 12f;
       label.fontStyle = FontStyles.Bold;
       label.enableWordWrapping = false;
       label.overflowMode = TextOverflowModes.Ellipsis;
-      label.color = new Color(1f, 1f, 1f, 0.94f);
+      label.richText = false;
+      label.parseCtrlCharacters = false;
+      label.enableAutoSizing = true;
+      label.fontSizeMin = 9f;
+      label.fontSizeMax = 12f;
+      label.color = UiAccentColor;
       label.text = labelText;
+      CreateOrFindControlIcon(buttonObject, iconGuid);
+    }
+
+    private static void CreateOrFindControlIcon(GameObject buttonObject, string iconGuid)
+    {
+      GameObject iconObject = CreateOrFindChild(buttonObject, "Icon", typeof(RectTransform), typeof(Image));
+      RectTransform iconRect = iconObject.GetComponent<RectTransform>();
+      iconRect.anchorMin = new Vector2(0.5f, 1f);
+      iconRect.anchorMax = new Vector2(0.5f, 1f);
+      iconRect.pivot = new Vector2(0.5f, 1f);
+      iconRect.anchoredPosition = new Vector2(0f, -5f);
+      iconRect.sizeDelta = new Vector2(26f, 26f);
+      iconRect.localRotation = Quaternion.identity;
+      iconRect.localScale = Vector3.one;
+
+      Image icon = iconObject.GetComponent<Image>();
+      icon.sprite = LoadSpriteByGuid(iconGuid);
+      icon.color = UiAccentColor;
+      icon.raycastTarget = false;
+      icon.preserveAspect = true;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) icon.material = material;
+      iconObject.SetActive(icon.sprite != null);
+    }
+
+    private static void CreateOrFindButtonIcon(GameObject buttonObject, string iconGuid, float size, float inset, bool iconOnRight)
+    {
+      Transform existing = buttonObject.transform.Find("Icon");
+      if (string.IsNullOrEmpty(iconGuid))
+      {
+        if (existing != null) UnityEngine.Object.DestroyImmediate(existing.gameObject);
+        return;
+      }
+
+      GameObject iconObject = existing == null ? CreateOrFindChild(buttonObject, "Icon", typeof(RectTransform), typeof(Image)) : existing.gameObject;
+      if (iconObject.GetComponent<Image>() == null) iconObject.AddComponent<Image>();
+      RectTransform iconRect = iconObject.GetComponent<RectTransform>();
+      iconRect.anchorMin = new Vector2(iconOnRight ? 1f : 0f, 0.5f);
+      iconRect.anchorMax = new Vector2(iconOnRight ? 1f : 0f, 0.5f);
+      iconRect.pivot = new Vector2(iconOnRight ? 1f : 0f, 0.5f);
+      iconRect.anchoredPosition = new Vector2(iconOnRight ? -inset : inset, 0f);
+      iconRect.sizeDelta = new Vector2(size, size);
+      iconRect.localRotation = Quaternion.identity;
+      iconRect.localScale = Vector3.one;
+
+      Image icon = iconObject.GetComponent<Image>();
+      icon.sprite = LoadSpriteByGuid(iconGuid);
+      bool mirrorNextIcon = icon.sprite == null && iconGuid == PreviousIconGuid;
+      if (mirrorNextIcon) icon.sprite = LoadSpriteByGuid(NextIconGuid);
+      iconRect.localScale = mirrorNextIcon ? new Vector3(-1f, 1f, 1f) : Vector3.one;
+      icon.color = UiAccentColor;
+      icon.raycastTarget = false;
+      icon.preserveAspect = true;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) icon.material = material;
+      iconObject.SetActive(icon.sprite != null);
+    }
+
+    private static void CreateOrFindNavigationShell(GameObject panelObject)
+    {
+      Sprite rounded = GetRoundedUiSprite();
+      Material material = GetOrCreateButtonMaterial();
+      GameObject frameObject = CreateOrFindChild(panelObject, "Navigation Frame", typeof(RectTransform), typeof(Image));
+      GameObject fillObject = CreateOrFindChild(panelObject, "Navigation BG", typeof(RectTransform), typeof(Image));
+      frameObject.transform.SetSiblingIndex(Mathf.Min(1, panelObject.transform.childCount - 1));
+      fillObject.transform.SetSiblingIndex(Mathf.Min(2, panelObject.transform.childCount - 1));
+
+      ConfigureNavigationShellImage(frameObject, new Vector2(12f, -216f), new Vector2(PagesPanelWidth - 24f, 32f), rounded, UiAccentColor, material);
+      ConfigureNavigationShellImage(fillObject, new Vector2(14f, -218f), new Vector2(PagesPanelWidth - 28f, 28f), rounded, new Color(0.015f, 0.014f, 0.02f, 0.94f), material);
+    }
+
+    private static void ConfigureNavigationShellImage(GameObject target, Vector2 anchoredPosition, Vector2 size, Sprite rounded, Color color, Material material)
+    {
+      RectTransform rect = target.GetComponent<RectTransform>();
+      rect.anchorMin = new Vector2(0f, 1f);
+      rect.anchorMax = new Vector2(0f, 1f);
+      rect.pivot = new Vector2(0f, 1f);
+      rect.anchoredPosition = anchoredPosition;
+      rect.sizeDelta = size;
+      rect.localRotation = Quaternion.identity;
+      rect.localScale = Vector3.one;
+
+      Image image = target.GetComponent<Image>();
+      image.sprite = rounded;
+      image.type = rounded == null ? Image.Type.Simple : Image.Type.Sliced;
+      image.pixelsPerUnitMultiplier = 2f;
+      image.color = color;
+      image.raycastTarget = false;
+      if (material != null) image.material = material;
+    }
+
+    private static void CreateOrFindSeparator(GameObject parent, string objectName, Vector2 anchoredPosition, Vector2 size)
+    {
+      GameObject separatorObject = CreateOrFindChild(parent, objectName, typeof(RectTransform), typeof(Image));
+      separatorObject.transform.SetAsLastSibling();
+      RectTransform rect = separatorObject.GetComponent<RectTransform>();
+      rect.anchorMin = new Vector2(0f, 1f);
+      rect.anchorMax = new Vector2(0f, 1f);
+      rect.pivot = new Vector2(0.5f, 0.5f);
+      rect.anchoredPosition = anchoredPosition;
+      rect.sizeDelta = size;
+      rect.localRotation = Quaternion.identity;
+      rect.localScale = Vector3.one;
+
+      Image image = separatorObject.GetComponent<Image>();
+      image.sprite = null;
+      image.type = Image.Type.Simple;
+      image.color = UiDividerColor;
+      image.raycastTarget = false;
+      Material material = GetOrCreateButtonMaterial();
+      if (material != null) image.material = material;
+    }
+
+    private static Sprite GetRoundedUiSprite()
+    {
+      Sprite sprite = LoadSpriteByGuid(RoundedSpriteGuid);
+      if (sprite != null) return sprite;
+      return AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+    }
+
+    private static Sprite LoadSpriteByGuid(string guid)
+    {
+      if (string.IsNullOrEmpty(guid)) return null;
+      string path = AssetDatabase.GUIDToAssetPath(guid);
+      return string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<Sprite>(path);
     }
 
     private static GameObject CreateOrFindChild(GameObject parent, string objectName, params System.Type[] components)
@@ -659,7 +1395,10 @@ namespace YamaBiliDanmakuV3.Editor
       WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
       Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(selected, controller, urlPrefixToggleButtonLabel);
       WireModuleUrlPrefixControls(module, urlPrefixHelper, urlPrefixToggleButtonLabel, urlPrefixToggleButton);
+      Component pagesPlaylist = CreateOrFindPagesPlaylist(selected, controller, module);
+      WirePagesPlaylist(pagesPlaylist, controller, module);
       ApplyVisualStyleFromModule(module, pool);
+      ApplyChineseUiFont(selected);
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "References wired.", "OK");
     }
 
@@ -682,6 +1421,65 @@ namespace YamaBiliDanmakuV3.Editor
 
       ApplyVisualStyleFromModule(module, selected.GetComponentsInChildren<TextMeshProUGUI>(true));
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "Visual style applied.", "OK");
+    }
+
+    [MenuItem("Yamadev/YamaPlayer/Create or Wire Selected Pages Panel", false, 2007)]
+    public static void CreateOrWireSelectedPagesPanel()
+    {
+      GameObject selected = Selection.activeGameObject;
+      if (selected == null)
+      {
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
+        return;
+      }
+
+      Component module = selected.GetComponent("YamaBiliDanmakuModule3");
+      if (module == null)
+      {
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Selected object does not have YamaBiliDanmakuModule3.", "OK");
+        return;
+      }
+
+      Controller controller = FindTargetController();
+      Component pagesPlaylist = CreateOrFindPagesPlaylist(selected, controller, module);
+      WirePagesPlaylist(pagesPlaylist, controller, module);
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Pages panel wired.", "OK");
+    }
+
+    [MenuItem("Yamadev/YamaPlayer/Apply Selected Bili UI Skin", false, 2008)]
+    public static void ApplySelectedUiSkin()
+    {
+      GameObject selected = Selection.activeGameObject;
+      if (selected == null)
+      {
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select the Bili Danmaku Module object first.", "OK");
+        return;
+      }
+
+      Component module = selected.GetComponent("YamaBiliDanmakuModule3");
+      if (module == null)
+      {
+        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Selected object does not have YamaBiliDanmakuModule3.", "OK");
+        return;
+      }
+
+      Button displayAreaButton;
+      TextMeshProUGUI displayAreaButtonLabel;
+      Button danmakuToggleButton;
+      TextMeshProUGUI danmakuToggleButtonLabel;
+      Button urlPrefixToggleButton;
+      TextMeshProUGUI urlPrefixToggleButtonLabel;
+      CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
+
+      Controller controller = FindTargetController();
+      Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(selected, controller, null);
+      WireModuleUrlPrefixControls(module, urlPrefixHelper, null, null);
+      Component pagesPlaylist = CreateOrFindPagesPlaylist(selected, controller, module);
+      WirePagesPlaylist(pagesPlaylist, controller, module);
+      ApplyChineseUiFont(selected);
+      EditorUtility.SetDirty(selected);
+      SceneView.RepaintAll();
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Black-gold UI skin applied. URL Input references were not changed.", "OK");
     }
 
     [MenuItem("Yamadev/YamaPlayer/Wire Selected Bili URL Prefix Helper", false, 2004)]
@@ -721,19 +1519,62 @@ namespace YamaBiliDanmakuV3.Editor
     {
       if (helper == null) return;
 
-      VRCUrlInputField topInput;
-      VRCUrlInputField bottomInput;
-      FindYamaPlayerUrlInputs(controller, out topInput, out bottomInput);
+      VRCUrlInputField queueInput = null;
+      Text queueInputText = null;
+      Text queueInputIdleLabel = null;
+      Component queuePlaylist = null;
+      Transform moduleRoot = helper.transform.parent;
+      if (moduleRoot != null)
+      {
+        Transform queueInputTransform = moduleRoot.Find(ControlsCanvasName + "/Queue URL Input");
+        if (queueInputTransform != null)
+        {
+          queueInput = queueInputTransform.GetComponent<VRCUrlInputField>();
+          Transform textTransform = queueInputTransform.Find("Text");
+          if (textTransform != null) queueInputText = textTransform.GetComponent<Text>();
+          Transform idleLabelTransform = queueInputTransform.Find("Idle Label");
+          if (idleLabelTransform != null) queueInputIdleLabel = idleLabelTransform.GetComponent<Text>();
+        }
+        Transform queuePanelTransform = moduleRoot.Find(PagesPanelName);
+        if (queuePanelTransform != null) queuePlaylist = queuePanelTransform.GetComponent("YamaBiliPagesPlaylist3");
+      }
 
       SerializedObject serialized = new SerializedObject(helper);
-      SerializedProperty topProperty = serialized.FindProperty("_topUrlInputField");
-      if (topProperty != null && topInput != null) topProperty.objectReferenceValue = topInput;
+      SerializedProperty controllerProperty = serialized.FindProperty("_controller");
+      if (controllerProperty != null && controller != null) controllerProperty.objectReferenceValue = controller;
 
+      SerializedProperty topProperty = serialized.FindProperty("_topUrlInputField");
       SerializedProperty bottomProperty = serialized.FindProperty("_bottomUrlInputField");
-      if (bottomProperty != null && bottomInput != null) bottomProperty.objectReferenceValue = bottomInput;
+      VRCUrlInputField topInput = topProperty == null ? null : topProperty.objectReferenceValue as VRCUrlInputField;
+      VRCUrlInputField bottomInput = bottomProperty == null ? null : bottomProperty.objectReferenceValue as VRCUrlInputField;
+
+      // YamaPlayer URL inputs are intentionally assigned by the user. The generated queue input
+      // has the same component type, so never allow it to occupy either manual reference slot.
+      if (queueInput != null && topInput == queueInput)
+      {
+        topProperty.objectReferenceValue = null;
+        topInput = null;
+      }
+      if (queueInput != null && bottomInput == queueInput)
+      {
+        bottomProperty.objectReferenceValue = null;
+        bottomInput = null;
+      }
 
       SerializedProperty labelProperty = serialized.FindProperty("_urlPrefixToggleButtonLabel");
       if (labelProperty != null) labelProperty.objectReferenceValue = urlPrefixToggleButtonLabel;
+
+      SerializedProperty queueInputProperty = serialized.FindProperty("_queueUrlInputField");
+      if (queueInputProperty != null) queueInputProperty.objectReferenceValue = queueInput;
+
+      SerializedProperty queuePlaylistProperty = serialized.FindProperty("_queuePlaylist");
+      if (queuePlaylistProperty != null) queuePlaylistProperty.objectReferenceValue = queuePlaylist;
+
+      SerializedProperty queueInputTextProperty = serialized.FindProperty("_queueInputText");
+      if (queueInputTextProperty != null) queueInputTextProperty.objectReferenceValue = queueInputText;
+
+      SerializedProperty queueInputIdleLabelProperty = serialized.FindProperty("_queueInputIdleLabel");
+      if (queueInputIdleLabelProperty != null) queueInputIdleLabelProperty.objectReferenceValue = queueInputIdleLabel;
 
       SerializedProperty prefixProperty = serialized.FindProperty("_urlPrefix");
       SetVRCUrl(prefixProperty, DefaultUrlPrefix);
@@ -747,6 +1588,56 @@ namespace YamaBiliDanmakuV3.Editor
 
       AddPrefixInputEventTriggers(topInput, helper, "ApplyPrefixToTopInput");
       AddPrefixInputEventTriggers(bottomInput, helper, "ApplyPrefixToBottomInput");
+      AddQueueInputEventTriggers(queueInput, helper);
+    }
+
+    private static void AddQueueInputEventTriggers(VRCUrlInputField inputField, Component helper)
+    {
+      if (inputField == null || helper == null) return;
+
+      UdonSharpBehaviour behaviour = helper as UdonSharpBehaviour;
+      if (behaviour == null) return;
+
+      EventTrigger trigger = inputField.GetComponent<EventTrigger>();
+      if (trigger == null) trigger = inputField.gameObject.AddComponent<EventTrigger>();
+      if (trigger.triggers == null) trigger.triggers = new System.Collections.Generic.List<EventTrigger.Entry>();
+
+      RemoveEventTriggerEntries(trigger, EventTriggerType.Select);
+      RemoveEventTriggerEntries(trigger, EventTriggerType.PointerClick);
+      RemoveEventTriggerEntries(trigger, EventTriggerType.PointerEnter);
+      RemoveEventTriggerEntries(trigger, EventTriggerType.Submit);
+      RemoveEventTriggerEntries(trigger, EventTriggerType.Deselect);
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.PointerEnter, behaviour, "PrimeQueueInput");
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.Select, behaviour, "PrepareQueueInput");
+      AddInputEndEditCustomEvent(inputField, helper, "SubmitQueueInput");
+      EditorUtility.SetDirty(trigger);
+    }
+
+    private static void RemoveEventTriggerEntries(EventTrigger trigger, EventTriggerType eventType)
+    {
+      if (trigger == null || trigger.triggers == null) return;
+      for (int i = trigger.triggers.Count - 1; i >= 0; i--)
+      {
+        EventTrigger.Entry entry = trigger.triggers[i];
+        if (entry != null && entry.eventID == eventType) trigger.triggers.RemoveAt(i);
+      }
+    }
+
+    private static void AddInputEndEditCustomEvent(VRCUrlInputField inputField, Component receiver, string eventName)
+    {
+      if (inputField == null || receiver == null || string.IsNullOrEmpty(eventName)) return;
+
+      UnityAction<string> sendEvent;
+      if (!TryGetSendCustomEventAction(receiver, out sendEvent)) return;
+
+      // This input belongs to the generated queue UI. Remove listeners left by older generated
+      // versions so the URL cannot be submitted to YamaPlayer and the queue helper at once.
+      for (int i = inputField.onEndEdit.GetPersistentEventCount() - 1; i >= 0; i--)
+        UnityEventTools.RemovePersistentListener(inputField.onEndEdit, i);
+
+      UnityEventTools.AddStringPersistentListener(inputField.onEndEdit, sendEvent, eventName);
+      inputField.AllowSendingOnEndEdit = true;
+      EditorUtility.SetDirty(inputField);
     }
 
     private static void AddPrefixInputEventTriggers(VRCUrlInputField inputField, Component helper, string eventName)
@@ -766,6 +1657,8 @@ namespace YamaBiliDanmakuV3.Editor
 
       AddPrefixInputEventTrigger(trigger, EventTriggerType.Select, behaviour, eventName);
       AddPrefixInputEventTrigger(trigger, EventTriggerType.PointerClick, behaviour, eventName);
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.Submit, behaviour, eventName);
+      AddPrefixInputEventTrigger(trigger, EventTriggerType.Deselect, behaviour, eventName);
       EditorUtility.SetDirty(trigger);
     }
 
@@ -790,34 +1683,6 @@ namespace YamaBiliDanmakuV3.Editor
       EventTrigger.Entry entry = new EventTrigger.Entry { eventID = eventType };
       UnityEventTools.AddStringPersistentListener(entry.callback, behaviour.SendCustomEvent, eventName);
       trigger.triggers.Add(entry);
-    }
-
-    private static void FindYamaPlayerUrlInputs(Controller controller, out VRCUrlInputField topInput, out VRCUrlInputField bottomInput)
-    {
-      topInput = null;
-      bottomInput = null;
-      if (controller == null) return;
-
-      Transform root = FindPlayerRoot(controller.transform);
-      if (root == null) root = controller.transform;
-
-      MonoBehaviour[] behaviours = root.GetComponentsInChildren<MonoBehaviour>(true);
-      for (int i = 0; i < behaviours.Length; i++)
-      {
-        MonoBehaviour behaviour = behaviours[i];
-        if (behaviour == null || behaviour.GetType().FullName != "Yamadev.YamaStream.UI.UIController") continue;
-
-        SerializedObject serialized = new SerializedObject(behaviour);
-        SerializedProperty topProperty = serialized.FindProperty("_urlInputFieldTop");
-        SerializedProperty bottomProperty = serialized.FindProperty("_urlInputField");
-        if (topProperty != null) topInput = topProperty.objectReferenceValue as VRCUrlInputField;
-        if (bottomProperty != null) bottomInput = bottomProperty.objectReferenceValue as VRCUrlInputField;
-        if (topInput != null || bottomInput != null) return;
-      }
-
-      VRCUrlInputField[] inputs = root.GetComponentsInChildren<VRCUrlInputField>(true);
-      if (inputs.Length > 0) bottomInput = inputs[0];
-      if (inputs.Length > 1) topInput = inputs[1];
     }
 
     private static void WireModule(Component module, Controller controller, RectTransform laneRoot, TextMeshProUGUI status, TextMeshProUGUI displayAreaButtonLabel, TextMeshProUGUI danmakuToggleButtonLabel, Button displayAreaButton, Button danmakuToggleButton, TextMeshProUGUI[] rawPool)
@@ -900,6 +1765,141 @@ namespace YamaBiliDanmakuV3.Editor
       AddModuleButtonClick(urlPrefixToggleButton, module, "ToggleUrlPrefixBackfill");
     }
 
+    private static void WirePagesPlaylist(Component playlist, Controller controller, Component module)
+    {
+      if (playlist == null) return;
+
+      Transform panel = playlist.transform;
+      TextMeshProUGUI titleLabel = null;
+      RectTransform titleRect = null;
+      RectTransform titleViewportRect = null;
+      TextMeshProUGUI statusLabel = null;
+      TextMeshProUGUI playModeLabel = null;
+      TextMeshProUGUI[] pageLabels = new TextMeshProUGUI[PagesButtonCount];
+      Image[] deleteIcons = new Image[PagesButtonCount];
+
+      Transform titleViewportTransform = panel.Find("Title Viewport");
+      if (titleViewportTransform != null)
+      {
+        titleViewportRect = titleViewportTransform.GetComponent<RectTransform>();
+        Transform titleTransform = titleViewportTransform.Find("Title");
+        if (titleTransform != null)
+        {
+          titleLabel = titleTransform.GetComponent<TextMeshProUGUI>();
+          titleRect = titleTransform.GetComponent<RectTransform>();
+        }
+      }
+      Transform statusTransform = panel.Find("Status");
+      if (statusTransform != null) statusLabel = statusTransform.GetComponent<TextMeshProUGUI>();
+      Transform playModeTransform = panel.Find("Play Mode Button/Label");
+      if (playModeTransform != null) playModeLabel = playModeTransform.GetComponent<TextMeshProUGUI>();
+
+      for (int i = 0; i < PagesButtonCount; i++)
+      {
+        Transform labelTransform = panel.Find("Page Button " + i + "/Label");
+        if (labelTransform != null) pageLabels[i] = labelTransform.GetComponent<TextMeshProUGUI>();
+        Transform deleteIconTransform = panel.Find("Page Button " + i + "/Delete Hotspot/Icon");
+        if (deleteIconTransform != null) deleteIcons[i] = deleteIconTransform.GetComponent<Image>();
+      }
+
+      WirePagesPlaylistReferences(playlist, controller, module, titleLabel, titleRect, titleViewportRect, statusLabel, playModeLabel, pageLabels, deleteIcons);
+    }
+
+    private static void WirePagesPlaylistReferences(Component playlist, Controller controller, Component module, TextMeshProUGUI titleLabel, RectTransform titleRect, RectTransform titleViewportRect, TextMeshProUGUI statusLabel, TextMeshProUGUI playModeLabel, TextMeshProUGUI[] pageLabels, Image[] deleteIcons)
+    {
+      if (playlist == null) return;
+
+      SerializedObject serialized = new SerializedObject(playlist);
+      SerializedProperty controllerProperty = serialized.FindProperty("_controller");
+      if (controllerProperty != null && controller != null) controllerProperty.objectReferenceValue = controller;
+
+      SerializedProperty moduleProperty = serialized.FindProperty("_danmakuModule");
+      if (moduleProperty != null && module != null) moduleProperty.objectReferenceValue = module;
+
+      Component helper = FindUrlPrefixHelperNear(playlist, module);
+      SerializedProperty helperProperty = serialized.FindProperty("_urlPrefixHelper");
+      if (helperProperty != null)
+      {
+        if (helper != null) helperProperty.objectReferenceValue = helper;
+      }
+
+      SerializedProperty prefixProperty = serialized.FindProperty("_pagesApiPrefix");
+      SetVRCUrl(prefixProperty, DefaultPagesApiPrefix);
+      SetBool(serialized, "_autoRefreshOnPlayback", true);
+      SetBool(serialized, "_autoPlayNext", true);
+      SetBool(serialized, "_useUnifiedQueue", true);
+      SetFloat(serialized, "_playbackWatchSeconds", 0.5f);
+      SetFloat(serialized, "_marqueePixelsPerSecond", 28f);
+      SetFloat(serialized, "_marqueeTickSeconds", 0.08f);
+      SetFloat(serialized, "_marqueePauseSeconds", 1.2f);
+      SerializedProperty vcridPrefixProperty = serialized.FindProperty("_vcridUrlPrefix");
+      if (vcridPrefixProperty != null) vcridPrefixProperty.stringValue = DefaultVcridUrlPrefix;
+      SetInt(serialized, "_vcridMax", DefaultVcridMax);
+
+      SerializedProperty titleProperty = serialized.FindProperty("_titleLabel");
+      if (titleProperty != null) titleProperty.objectReferenceValue = titleLabel;
+      SerializedProperty titleRectProperty = serialized.FindProperty("_titleRect");
+      if (titleRectProperty != null) titleRectProperty.objectReferenceValue = titleRect;
+      SerializedProperty titleViewportProperty = serialized.FindProperty("_titleViewportRect");
+      if (titleViewportProperty != null) titleViewportProperty.objectReferenceValue = titleViewportRect;
+
+      SerializedProperty statusProperty = serialized.FindProperty("_statusLabel");
+      if (statusProperty != null) statusProperty.objectReferenceValue = statusLabel;
+
+      SerializedProperty playModeProperty = serialized.FindProperty("_playModeButtonLabel");
+      if (playModeProperty != null) playModeProperty.objectReferenceValue = playModeLabel;
+
+      SerializedProperty labelsProperty = serialized.FindProperty("_pageButtonLabels");
+      if (labelsProperty != null)
+      {
+        labelsProperty.arraySize = PagesButtonCount;
+        for (int i = 0; i < PagesButtonCount; i++)
+        {
+          labelsProperty.GetArrayElementAtIndex(i).objectReferenceValue = pageLabels != null && i < pageLabels.Length ? pageLabels[i] : null;
+        }
+      }
+
+      SerializedProperty deleteIconsProperty = serialized.FindProperty("_deleteButtonIcons");
+      if (deleteIconsProperty != null)
+      {
+        deleteIconsProperty.arraySize = PagesButtonCount;
+        for (int i = 0; i < PagesButtonCount; i++)
+        {
+          deleteIconsProperty.GetArrayElementAtIndex(i).objectReferenceValue = deleteIcons != null && i < deleteIcons.Length ? deleteIcons[i] : null;
+        }
+      }
+
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+
+      if (helper != null)
+      {
+        SerializedObject helperSerialized = new SerializedObject(helper);
+        SerializedProperty queuePlaylistProperty = helperSerialized.FindProperty("_queuePlaylist");
+        if (queuePlaylistProperty != null) queuePlaylistProperty.objectReferenceValue = playlist;
+        helperSerialized.ApplyModifiedPropertiesWithoutUndo();
+      }
+    }
+
+    private static Component FindUrlPrefixHelperNear(Component playlist, Component module)
+    {
+      System.Type helperType = FindType("YamaBiliDanmakuV3.YamaBiliUrlPrefixHelper3");
+      if (helperType == null) return null;
+
+      if (module != null)
+      {
+        Component helper = module.GetComponentInChildren(helperType, true);
+        if (helper != null) return helper;
+      }
+
+      if (playlist != null && playlist.transform.parent != null)
+      {
+        Component helper = playlist.transform.parent.GetComponentInChildren(helperType, true);
+        if (helper != null) return helper;
+      }
+
+      return null;
+    }
+
     private static void AddModuleButtonClick(Button button, Component module, string eventName)
     {
       if (button == null || module == null || string.IsNullOrEmpty(eventName)) return;
@@ -925,6 +1925,145 @@ namespace YamaBiliDanmakuV3.Editor
 
       Undo.DestroyObjectImmediate(raycaster);
       EditorUtility.SetDirty(root);
+    }
+
+    private static void ApplyChineseUiFont(GameObject root)
+    {
+      if (root == null) return;
+
+      TMP_FontAsset font = FindChineseUiFont();
+      if (font == null) return;
+
+      Transform controls = root.transform.Find(ControlsCanvasName);
+      if (controls != null) ApplyChineseUiFontToObject(controls.gameObject, font);
+
+      Transform pages = root.transform.Find(PagesPanelName);
+      if (pages != null) ApplyChineseUiFontToObject(pages.gameObject, font);
+    }
+
+    private static void ApplyChineseUiFontToObject(GameObject target, TMP_FontAsset font)
+    {
+      if (target == null || font == null) return;
+
+      TextMeshProUGUI[] labels = target.GetComponentsInChildren<TextMeshProUGUI>(true);
+      for (int i = 0; i < labels.Length; i++)
+      {
+        if (labels[i] == null) continue;
+        labels[i].font = font;
+        EditorUtility.SetDirty(labels[i]);
+      }
+    }
+
+    private static TMP_FontAsset FindChineseUiFont()
+    {
+      TMP_FontAsset generated = GetOrCreateGeneratedUiFont();
+      if (generated != null) return generated;
+
+      TMP_FontAsset best = null;
+      int bestScore = -1;
+
+      ConsiderUiFont(TMP_Settings.defaultFontAsset, ref best, ref bestScore);
+
+      TMP_FontAsset[] loadedFonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
+      for (int i = 0; i < loadedFonts.Length; i++)
+      {
+        if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(loadedFonts[i]))) continue;
+        ConsiderUiFont(loadedFonts[i], ref best, ref bestScore);
+      }
+
+      string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+      for (int i = 0; i < guids.Length; i++)
+      {
+        string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+        TMP_FontAsset font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(path);
+        ConsiderUiFont(font, ref best, ref bestScore);
+      }
+      return best;
+    }
+
+    private static void ConsiderUiFont(TMP_FontAsset font, ref TMP_FontAsset best, ref int bestScore)
+    {
+      if (font == null) return;
+      string path = AssetDatabase.GetAssetPath(font).Replace('\\', '/');
+      if (path == LegacyYouYuanFontAssetPath) return;
+      if (!SupportsCharacters(font, RequiredUiCharacters)) return;
+
+      int characterCount = font.characterTable == null ? 0 : font.characterTable.Count;
+      int score = Mathf.Min(characterCount, 1000000);
+      if (font == TMP_Settings.defaultFontAsset) score += 1;
+      if (score <= bestScore) return;
+
+      best = font;
+      bestScore = score;
+    }
+
+    private static bool SupportsCharacters(TMP_FontAsset font, string characters)
+    {
+      if (font == null || string.IsNullOrEmpty(characters)) return false;
+      for (int i = 0; i < characters.Length; i++)
+      {
+        if (!font.HasCharacter(characters[i], false, false)) return false;
+      }
+      return true;
+    }
+
+    private static TMP_FontAsset GetOrCreateGeneratedUiFont()
+    {
+      Font sourceFont = FindUiSourceFont();
+      if (sourceFont == null) return null;
+
+      TMP_FontAsset fontAsset = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(GeneratedUiFontAssetPath);
+      if (fontAsset != null && fontAsset.sourceFontFile != sourceFont)
+      {
+        AssetDatabase.DeleteAsset(GeneratedUiFontAssetPath);
+        fontAsset = null;
+      }
+
+      if (fontAsset == null)
+      {
+        string directory = Path.GetDirectoryName(GeneratedUiFontAssetPath);
+        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+        fontAsset = TMP_FontAsset.CreateFontAsset(
+          sourceFont,
+          64,
+          6,
+          GlyphRenderMode.SDFAA,
+          1024,
+          1024,
+          AtlasPopulationMode.Dynamic,
+          true);
+        if (fontAsset == null) return null;
+
+        fontAsset.name = "PaulKoi UI SDF";
+        Texture2D atlasTexture = fontAsset.atlasTexture;
+        Material atlasMaterial = fontAsset.material;
+        if (atlasTexture != null) atlasTexture.name = "PaulKoi UI Atlas";
+        if (atlasMaterial != null) atlasMaterial.name = "PaulKoi UI Atlas Material";
+
+        AssetDatabase.CreateAsset(fontAsset, GeneratedUiFontAssetPath);
+        if (atlasTexture != null) AssetDatabase.AddObjectToAsset(atlasTexture, fontAsset);
+        if (atlasMaterial != null) AssetDatabase.AddObjectToAsset(atlasMaterial, fontAsset);
+      }
+
+      fontAsset.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+      fontAsset.isMultiAtlasTexturesEnabled = true;
+
+      SerializedObject serialized = new SerializedObject(fontAsset);
+      SerializedProperty clearDynamicData = serialized.FindProperty("m_ClearDynamicDataOnBuild");
+      if (clearDynamicData != null) clearDynamicData.boolValue = false;
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+
+      string missingCharacters;
+      fontAsset.TryAddCharacters(RequiredUiCharacters, out missingCharacters, true);
+      if (!string.IsNullOrEmpty(missingCharacters))
+      {
+        Debug.LogWarning("Yama Bili Danmaku: the UI font is missing characters: " + missingCharacters);
+      }
+
+      EditorUtility.SetDirty(fontAsset);
+      AssetDatabase.SaveAssets();
+      return fontAsset;
     }
 
     private static bool TryGetSendCustomEventAction(Component component, out UnityAction<string> sendEvent)

@@ -9,9 +9,9 @@
 - 编辑器生成器：`Editor/YamaBiliDanmakuRigBuilder3.cs`
 - 镜子可读 TMP Shader：`Shaders/YamaBiliDanmakuTMPMirrorReadable.shader`
 - Docker 服务：`server/src/server.js`
-- 公开版本：`1.04beta`（PC / 桌面端）。Android / Quest 普通播放器继续使用 `1.03`；Android / Quest 可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包
+- YamaPlayer PC / 桌面端正式稳定版：`1.10`（由 `beta13.43` 转正并发布到 GitHub）。1.10 Release 只包含 YamaPlayer 适配包；iwaSync3 与 VizVid 暂时保持当前公开版本。Android / Quest 普通播放器继续使用 `1.03`；Android / Quest 可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包
 
-后续普通播放器功能应从这个 PC 基线继续，不应从早期试验包或旧版 Package 目录回拷代码。Android / Quest 普通播放器不要套用 PC 端 1.04beta 的外部显示面挂载逻辑，继续保留 1.03；Android / Quest 平板跟随问题不要继续塞回普通 `YamaBiliDanmakuV3`，应在独立 Tablet 包内处理。
+后续 YamaPlayer 普通播放器功能应从 1.10 这个 PC 基线继续，不应从早期试验包或旧版 Package 目录回拷代码。Android / Quest 普通播放器不要套用 PC 端外部显示面挂载逻辑，继续保留 1.03；Android / Quest 平板跟随问题不要继续塞回普通 `YamaBiliDanmakuV3`，应在独立 Tablet 包内处理。
 
 ## 1. 从房间状态转向无状态 URL
 
@@ -487,6 +487,47 @@ VizVid 在视频加载失败或 URL 无效后，`Core.Url` 可能仍保留失败
 `vrc-bilibili-danmaku-server-v1.0.3new.zip` 仍然保持公开版本号 `1.0.3`，但内部加入了几项防护和兼容改动：请求限流、上游请求超时、失败缓存、输入 URL 白名单、B 站 / 网易云分享文本中的链接提取、`bili2233.cn` 短链识别，以及更完整的缓存 / 限流 / 上游失败统计。
 
 这次后端改动不改变 Unity 端 URL Prefix、弹幕解析和播放同步接口。发布时应替换 release 中的 `vrc-bilibili-danmaku-server-v1.0.3.zip` 资产，但 release tag 继续使用 `v1.0.3`。
+
+## 15. YamaPlayer v1.10 正式稳定版
+
+`beta13.43` 经单人和多人播放列表逻辑迭代后，转为 YamaPlayer PC / 桌面端正式稳定版 `1.10` 并发布到 GitHub。本轮只发布 YamaPlayer 线；iwaSync3、VizVid 与 Android / Quest 平板专用线尚未移植同一套播放列表功能，不得混入 1.10 Release。
+
+### 播放列表与播放方式
+
+- 原 `Bili Pages` 改为通用的“播放列表”，同时支持 B 站多 P、合集/list 与网易云音乐歌单；单 P/单曲也显示标题。
+- 面板每页最多显示 6 项，使用“首页”“上一页”“下一页”“顺序播放”“单项循环”等中文按钮。
+- 点击非当前项目会直接切换播放；重复点击当前项目不会重新加载播放和弹幕。
+- 顺序播放默认是列表循环，最后一项结束后回到第一项；单项循环复用 YamaPlayer `Controller.Loop`，避免维护第二套循环状态。
+- “首页”只回到列表第一页，不重新解析、不重启当前媒体，也不改变当前播放项目。
+
+### vcrid 与 Udon 限制
+
+- Unity 先读取后端 manifest，再使用后端预置的 `/player/?vcrid=<id>` 条目播放。`vcrid` 同时关联对应分 P/曲目的弹幕。
+- VRChat/Udon 不允许在运行时使用 `new VRCUrl(string)`；因此可播放的 vcrid URL 在构建世界时由 `YamaBiliVcridBuildProcess3` 预生成，运行时只从固定目录取 `VRCUrl`。
+- 不重新引入不存在的 `YamaPlayerListener`、`TrackUtils`、`Controller.Handler` 或 `Controller.MirrorFlip`，也不依赖 YamachanWebUnit。
+
+### 列表保持与事件竞争
+
+- B 站与网易云歌单都不会因为正常切换项目、首次播放事件或非最终停止事件而把完整列表缩成当前单项。
+- 新输入源在确认后才替换旧 manifest；失败时保留明确状态，不用只有 `idle` 的无信息表现。
+- 播放器实际 URL 的 vcrid 是当前项目判断的最高优先级，避免 UI 选中项与真正播放项目分离。
+- `beta13.42` 修复三处 `vcrid=` 参数偏移错误：参数值必须从标记后的第 6 个字符开始读取，不能错误跳过首位。该错误会把 `vcrid=150` 解析成 `50`、把 `vcrid=52` 解析成 `2`，从而导致长分 P 列表跳到错误项目。
+- `beta13.43` 增加本地页面浏览锁定：用户主动点击首页、上一页或下一页后，首次清单解析完成和队列标题回填只更新数据与当前项目，不再把正在浏览的页码强制重置为首页。该状态只属于本地 UI，不加入多人同步字段。
+
+### 多人同步
+
+- `YamaBiliPagesPlaylist3` 使用 Manual Sync，只同步 manifest 来源、当前 vcrid、播放模式、修订号和列表是否有效等少量状态，不同步整个标题数组或弹幕数据。
+- 点击项目的玩家先取得 Pages 组件和 YamaPlayer Controller 的所有权，再更新播放与同步状态。
+- 非所有者收到的 `OnVideoStop` 不得清空公共列表；只有所有者的真实终止操作可以同步清空。
+- 后加入玩家收到同步状态后，用 manifest 来源重新下载完整列表，并根据同步 vcrid 恢复当前项目高亮。
+- 该同步只负责播放列表 UI 与选择状态；媒体播放仍由 YamaPlayer 自身同步，弹幕渲染仍按各客户端播放器时间线运行。
+
+### 保持不变的稳定链路
+
+- 没有改动既有弹幕下载、`#YBDM/1` 解析、对象池、时间同步、暂停恢复和显示区域主链路。
+- 保留彩色文字、黑色描边、轻微加粗、镜子可读 shader 与现有透明度基线。
+- 安卓规则不变：普通 Android / Quest 播放器使用 1.03；可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包，不把 Tablet 修复并回 YamaPlayer 1.10。
+- Unity 编辑器若找不到包含所需中文字形的持久化 TMP 字体，Inspector/Scene 里可能显示方框；VRChat 客户端的运行时字体回退表现不受此编辑器提示影响。
 
 ## 后续修改检查表
 

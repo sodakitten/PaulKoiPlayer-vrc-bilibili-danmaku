@@ -65,6 +65,7 @@ namespace YamaBiliDanmakuV3
     private int _nextLine;
     private bool _loaded;
     private bool _requestedForPlayback;
+    private bool _externalAudioMode;
     private int _lastVideoMs = -1;
     private float _statusHideAt;
     private bool _lastLoadWasCurrentUrl;
@@ -109,7 +110,7 @@ namespace YamaBiliDanmakuV3
         return;
       }
 
-      if (!_requestedForPlayback)
+      if (!_requestedForPlayback && !_externalAudioMode)
       {
         _requestedForPlayback = true;
         LoadCurrentTrackDanmaku();
@@ -188,9 +189,33 @@ namespace YamaBiliDanmakuV3
       VRCStringDownloader.LoadUrl(_fallbackDanmakuUrl, (IUdonEventReceiver)this);
     }
 
+    public void LoadDanmakuUrl(VRCUrl danmakuUrl)
+    {
+      if (VRCUrl.IsNullOrEmpty(danmakuUrl) || string.IsNullOrEmpty(danmakuUrl.Get()))
+      {
+        SetStatus("no selected danmaku url");
+        return;
+      }
+
+      ResetDanmaku();
+      _lastLoadWasCurrentUrl = false;
+      _triedFallbackAfterCurrentUrl = false;
+      _requestedForPlayback = true;
+      SetStatus("loading selected p");
+      VRCStringDownloader.LoadUrl(danmakuUrl, (IUdonEventReceiver)this);
+    }
+
     public void ClearDanmaku()
     {
       ResetDanmaku();
+    }
+
+    public void SetExternalAudioMode(bool enabled)
+    {
+      if (_externalAudioMode == enabled) return;
+      _externalAudioMode = enabled;
+      ResetDanmaku();
+      if (_externalAudioMode) SetStatus("audio playlist");
     }
 
     public void HideDanmaku()
@@ -402,6 +427,14 @@ namespace YamaBiliDanmakuV3
 
     private void ShowLineWithAge(int index, float ageSeconds)
     {
+      int mode = _mode[index];
+      bool isFixedLyric = _externalAudioMode && mode == 4;
+      if (isFixedLyric && (index <= 0 || _timeMs[index - 1] != _timeMs[index]))
+      {
+        HideAllTexts();
+        ClearLaneTimers();
+      }
+
       int poolIndex = FindFreeText();
       if (poolIndex < 0 || !Utilities.IsValid(_laneRoot)) return;
 
@@ -409,7 +442,6 @@ namespace YamaBiliDanmakuV3
       RectTransform rect = _poolRects[poolIndex];
       if (!Utilities.IsValid(text) || !Utilities.IsValid(rect)) return;
 
-      int mode = _mode[index];
       bool isBottom = mode == 4;
       bool isTop = mode == 5;
       bool isStatic = isBottom || isTop;
@@ -426,7 +458,8 @@ namespace YamaBiliDanmakuV3
       float areaHeight = Mathf.Max(_lineHeight, rootHeight * areaFactor);
       float areaTop = rootHeight * 0.5f;
       float areaBottom = areaTop - areaHeight;
-      int lane = SelectLane(GetEffectiveLaneCount(areaHeight));
+      int effectiveLaneCount = GetEffectiveLaneCount(areaHeight);
+      int lane = isFixedLyric ? GetFixedLyricLane(index, effectiveLaneCount) : SelectLane(effectiveLaneCount);
       if (lane < 0) return;
       int contentLength = string.IsNullOrEmpty(_content[index]) ? 1 : _content[index].Length;
       float textWidth = Mathf.Max(120f, contentLength * 36f * visualScale + 96f);
@@ -436,7 +469,7 @@ namespace YamaBiliDanmakuV3
 
       _poolActive[poolIndex] = true;
       AddActivePoolIndex(poolIndex);
-      _activeDuration[poolIndex] = isStatic ? _staticDuration : _scrollDuration;
+      _activeDuration[poolIndex] = isFixedLyric ? GetFixedLyricDuration(index) : isStatic ? _staticDuration : _scrollDuration;
       float clampedAge = Mathf.Clamp(ageSeconds, 0f, Mathf.Max(0.01f, _activeDuration[poolIndex] - 0.01f));
       _activeStartTime[poolIndex] = Time.time - clampedAge;
       _activeStartX[poolIndex] = isStatic ? 0f : rootWidth * 0.5f + textWidth * 0.5f;
@@ -450,6 +483,38 @@ namespace YamaBiliDanmakuV3
       text.gameObject.SetActive(true);
       float laneHoldSeconds = isStatic ? _staticDuration * 0.7f : _scrollDuration * 0.35f;
       _laneReadyAt[lane] = Time.time + Mathf.Max(0f, laneHoldSeconds - clampedAge);
+    }
+
+    private int GetFixedLyricLane(int index, int laneCount)
+    {
+      int groupStart = index;
+      while (groupStart > 0 && _timeMs[groupStart - 1] == _timeMs[index]) groupStart--;
+
+      int groupEnd = index;
+      while (groupEnd + 1 < _lineCount && _timeMs[groupEnd + 1] == _timeMs[index]) groupEnd++;
+
+      int groupPosition = index - groupStart;
+      int groupCount = groupEnd - groupStart + 1;
+      int lane = groupCount - groupPosition;
+      return Mathf.Clamp(lane, 0, Mathf.Max(0, laneCount - 1));
+    }
+
+    private float GetFixedLyricDuration(int index)
+    {
+      int nextIndex = index + 1;
+      while (nextIndex < _lineCount && _timeMs[nextIndex] == _timeMs[index]) nextIndex++;
+      if (nextIndex < _lineCount)
+      {
+        int intervalMs = _timeMs[nextIndex] - _timeMs[index];
+        if (intervalMs > 0) return Mathf.Max(0.5f, intervalMs / 1000f);
+      }
+
+      if (Utilities.IsValid(_controller) && !_controller.IsLive)
+      {
+        float remaining = _controller.Duration - _timeMs[index] / 1000f;
+        if (remaining > 0f) return Mathf.Max(0.5f, remaining);
+      }
+      return _staticDuration;
     }
 
     private void UpdateActiveTexts()
@@ -606,20 +671,20 @@ namespace YamaBiliDanmakuV3
     private void UpdateDanmakuToggleButtonLabel()
     {
       if (!Utilities.IsValid(_danmakuToggleButtonLabel)) return;
-      _danmakuToggleButtonLabel.text = _danmakuEnabled ? "Danmaku: On" : "Danmaku: Off";
+      _danmakuToggleButtonLabel.text = _danmakuEnabled ? "弹幕显示：开" : "弹幕显示：关";
     }
 
     private void UpdateUrlPrefixToggleButtonLabel()
     {
       if (!Utilities.IsValid(_urlPrefixToggleButtonLabel)) return;
-      _urlPrefixToggleButtonLabel.text = _urlPrefixFillEnabled ? "URL Fill: On" : "URL Fill: Off";
+      _urlPrefixToggleButtonLabel.text = _urlPrefixFillEnabled ? "链接填充：开" : "链接填充：关";
     }
 
     private string GetDisplayAreaButtonText()
     {
-      if (_displayAreaMode == 1) return "Danmaku: Half";
-      if (_displayAreaMode == 2) return "Danmaku: 1/4";
-      return "Danmaku: Full";
+      if (_displayAreaMode == 1) return "弹幕区域：半屏";
+      if (_displayAreaMode == 2) return "弹幕区域：四分之一";
+      return "弹幕区域：全屏";
     }
 
     private string GetDisplayAreaStatusText()
