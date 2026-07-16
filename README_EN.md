@@ -82,7 +82,7 @@ That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup t
 - Optional custom parser prefix for player URL input fields
 - Public enable, disable, and toggle events for custom world UI
 - YamaPlayer 1.10 supports Bilibili multi-part videos/collections/lists and NetEase Cloud Music playlists, with up to six entries per page
-- Sequential playback with list wraparound, single-entry looping, Home, Previous, and Next controls
+- Sequential playback and single-entry looping with Home, Previous, and Next controls; NetEase playlists wrap as a complete playlist, while Bilibili multi-part playback continues into the following queue or stops after its final part
 - Lightweight manual Udon synchronization for multiplayer selection state and late-join list recovery
 
 ## Requirements
@@ -194,7 +194,7 @@ YamaPlayer 1.10 generates a lightweight Chinese control interface under `Bili Da
 
 - `弹幕范围：全屏 / 半屏 / 1/4屏`: cycles the danmaku display area.
 - `弹幕：开启 / 关闭`: toggles danmaku visibility.
-- `URL 回填：开启 / 关闭`: toggles URL-prefix filling.
+- `视频链接`: opens the component's integrated queue input and adds a URL through the preconfigured parser prefix. The original YamaPlayer Top/Bottom URL inputs remain manually assignable when needed.
 - `播放列表`: shows Bilibili multi-part/list entries or NetEase playlist tracks and switches between sequential and single-entry looping.
 
 Switching the display area does not clear danmaku already on screen. Only newly emitted danmaku uses the new area.
@@ -238,7 +238,7 @@ Compared with 1.04beta, YamaPlayer 1.10 adds:
 - A generic `播放列表` panel for Bilibili multi-part videos, collections/lists, and NetEase Cloud Music playlists.
 - Up to six entries per page with Home, Previous, Next, sequential-play, and single-entry-loop controls.
 - Playback through backend-prebuilt `vcrid` URLs, avoiding runtime `VRCUrl` construction in Udon.
-- Sequential playback wraps from the final item to the first; single-entry looping reuses YamaPlayer's own loop state.
+- NetEase playlists wrap as a complete list in sequential mode. Bilibili multi-part playback continues into the following YamaPlayer queue after its final part, or stops when no item follows. Single-entry looping reuses YamaPlayer's own loop state.
 - Protection against first-load, track-change, and stop-event races that could collapse a full playlist into one item.
 - Lightweight multiplayer synchronization for the manifest source, current item, loop mode, and revision; late joiners can download the complete list.
 - Non-owner stop events cannot clear the shared list, and the displayed current item follows the actual playing `vcrid`.

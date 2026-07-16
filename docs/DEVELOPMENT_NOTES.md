@@ -497,7 +497,7 @@ VizVid 在视频加载失败或 URL 无效后，`Core.Url` 可能仍保留失败
 - 原 `Bili Pages` 改为通用的“播放列表”，同时支持 B 站多 P、合集/list 与网易云音乐歌单；单 P/单曲也显示标题。
 - 面板每页最多显示 6 项，使用“首页”“上一页”“下一页”“顺序播放”“单项循环”等中文按钮。
 - 点击非当前项目会直接切换播放；重复点击当前项目不会重新加载播放和弹幕。
-- 顺序播放默认是列表循环，最后一项结束后回到第一项；单项循环复用 YamaPlayer `Controller.Loop`，避免维护第二套循环状态。
+- 网易云歌单的顺序播放是整表循环，最后一曲结束后回到第一曲；B 站多 P 到最后一 P 后继续 YamaPlayer 后续队列，没有后续项目时停止。单项循环复用 YamaPlayer `Controller.Loop`，避免维护第二套循环状态。
 - “首页”只回到列表第一页，不重新解析、不重启当前媒体，也不改变当前播放项目。
 
 ### vcrid 与 Udon 限制
@@ -529,6 +529,156 @@ VizVid 在视频加载失败或 URL 无效后，`Core.Url` 可能仍保留失败
 - 安卓规则不变：普通 Android / Quest 播放器使用 1.03；可拾取平板使用独立 `YamaBiliDanmakuTabletV3` 包，不把 Tablet 修复并回 YamaPlayer 1.10。
 - Unity 编辑器若找不到包含所需中文字形的持久化 TMP 字体，Inspector/Scene 里可能显示方框；VRChat 客户端的运行时字体回退表现不受此编辑器提示影响。
 
+## 16. v1.10 长周期开发复盘
+
+1.10 的难点并不是把 `/api/pages` 的结果画成六个按钮，而是让播放器 URL、后端 manifest、YamaPlayer 队列、当前播放条目、弹幕/歌词来源、多人同步和本地翻页状态在大量异步事件中保持一致。开发过程中多次出现“单独看每段代码都合理，但组合后状态互相覆盖”的问题。以下内容是这轮开发中新增的工程认识，也是以后修改播放列表时必须遵守的边界。
+
+### 不要再把所有状态都叫“当前 URL”
+
+最终实现至少区分六类状态：
+
+- **输入源 URL**：用户输入的 B 站视频、合集/list、网易云单曲或歌单地址，用于请求 manifest。
+- **manifest URL**：可重新下载完整列表的来源，不能被当前某个 `/player/?vcrid=...` 覆盖。
+- **当前媒体 URL**：YamaPlayer 真正正在播放的条目，主要用于确认当前 `vcrid` 和加载对应弹幕/歌词。
+- **YamaPlayer Queue**：普通单 P、独立视频和排在多 P 后面的项目；其生命周期由 YamaPlayer 负责。
+- **轻量 manifest 数组**：B 站多 P 和网易云歌单的标题、页码、`vcrid` 等数据，不应全部转换成 YamaPlayer `Track`。
+- **本地 UI 页码**：玩家正在浏览哪一页，只属于本地界面，不等于当前播放项目，也不应作为多人同步状态。
+
+早期大量回归都来自这些状态被复用：播放某个 `vcrid` 后把完整 manifest 当成单项、标题回填完成后重置当前页、停止事件把列表当成已经更换来源、或把队列中的占位条目误认成当前媒体。以后新增字段时应先明确它属于上述哪一类，不能再用一个 `_lastUrl` 同时承担多个角色。
+
+### Udon 与 YamaPlayer API 边界
+
+- UdonSharp 运行时不能调用 `new VRCUrl(string)`。编辑器 C# 可以构造 `VRCUrl`，因此 `YamaBiliVcridBuildProcess3` 在构建世界前预生成 `/player/?vcrid=1..N` 的 `VRCUrl[]`，运行时只按 ID 取已有对象。
+- `VRCUrl` 没有可供当前 Udon 环境调用的 `IsValidUrl()`；字符串 URL 校验与 `VRCUrl.IsNullOrEmpty()` 不能混为一谈。
+- 不得根据别的 YamaPlayer 版本或旧教程猜 API。实际使用的包里没有 `YamaPlayerListener`、`TrackUtils`、`Controller.Handler` 或 `Controller.MirrorFlip`；`Playlist.AddTrack` 需要真正的 `Track`，不是 `object[]`。
+- `TMP_Text.fontSize` 在这套 Udon 暴露表中不可运行时赋值。字体大小、行高、Auto Size、Mask 和字体资产应由 Editor 生成器配置，不能把普通 Unity C# 可写属性直接搬进 UdonSharp。
+- U# Program Asset 依赖稳定的类名、namespace、文件名和 Source C# Script 关联。修复功能时不应重命名现有运行时类，也不能用大重构换掉组件身份。
+- 判断播放器 API 时必须以用户实际导入的 YamaPlayer 源码为准。此次在拿到 `net.kwxxw.yama-stream.zip` 后才确认可用的 `Controller`、`Playlist` 和 `Track` 接口，避免继续围绕不存在的成员修补。
+
+### 后端 vcrid 机制带来的新知识
+
+- `vcrid` 不是把整个 B 站 URL 库爬下来，而是后端为已经解析到的可播放项目建立稳定映射。B 站多 P 绑定 `bvid + cid`，list/合集里的每个独立 BV 绑定自己的项目，重复来源可以复用同一 ID。
+- `/player/?vcrid=<id>` 是双用途端点：视频播放器请求时 302 到媒体直链，`VRCStringDownloader`/文本请求时可以返回 `#YBDM/1`。因此同一份预生成 URL 既能播放，也能下载对应弹幕或网易云歌词。
+- Unity 不应自己重新拼接 list 内每一项的播放地址，优先使用 manifest 和稳定 `vcrid`。否则短链、独立 BV、分 P `cid` 和网易云 provider 很容易被错误归一化。
+- 后端接口契约曾从 `/api/pages` 404、`/player/?__dm=1&url=...` 文本清单演进到带 `vcrid` 的 manifest。Unity 端不能只根据曾经的接口说明推断线上行为，每次变更都要实际验证状态码、响应类型、`manifest_type`、`provider`、项目数和首尾 `vcrid`。
+- `vcrid=` 的值从标记后的第 6 个字符开始。`marker + 7` 会悄悄吃掉第一位数字，使 `150` 变成 `50`、`52` 变成 `2`。这种错误不会导致编译失败，只会表现为“点 P150 却跳到别的视频”，必须通过日志同时打印原 URL 与解析 ID 才容易发现。
+
+### 150 项卡顿不是 Unity 的硬上限
+
+曾经怀疑“Unity 或 VRChat 最多只能加载 150 个队列项目”，实际问题不是固定的 150 上限，而是把 90/150 个分 P 全部实例化为 YamaPlayer `Track` 后产生的连锁开销：批量 Add/Remove、网络所有权、队列序列化、标题回填、重复规范化以及 UI 重建会集中发生在同一小段时间内。
+
+最终采用混合模型：
+
+- B 站多 P 保存在 `_biliManifestParts/_biliManifestVcrids` 等轻量数组中，播放面板每次只渲染当前 6 项。
+- 多 P 作为一个占位项目排入 YamaPlayer Queue，轮到它时再进入多 P 模式；播放到最后一 P 后继续后续普通队列，不自动回到 P1。
+- 普通单 P/独立视频继续使用 YamaPlayer Queue，播完后按 YamaPlayer 原有行为自然移除。
+- 网易云歌单进入独立 manifest 模式并整表顺序循环；它不会把每首歌永久堆成大量 Yama Queue 项目。
+- 统一显示列表通过缓存后的“来源类型 + 来源索引”合并 manifest、当前项目和 Queue；缓存失效时重建，普通帧不反复扫描和分配。
+
+代码中的 `MaxUnifiedQueueItems = 200` 是界面和内存保护值，不是 VRChat 平台宣称的媒体队列上限。未来若提高它，仍要先测试所有权、序列化和最坏情况下的列表重建成本。
+
+### 播放事件不是单一的“结束”
+
+YamaPlayer 在自然播放结束、用户手动停止、内部切 P、点击其他项目、加载失败和网络端状态变化时，可能触发相近或连续的回调。尤其常见的是 `OnVideoEnd` 后紧接 `OnVideoStop`。如果每个回调都直接清列表或前进队列，就会出现双重前进、跳过项目、列表缩成单项或音乐仍播放但 UI 已清空。
+
+最终必须显式区分：
+
+- `_naturalEndPending`：自然播放结束，后续 Stop 不能再按手动停止处理。
+- `_internalTrackSwitch` / `_autoAdvancePending`：插件正在主动切换项目，旧媒体的 Stop 不能清理新状态。
+- `_manualStopAdvancePending`：普通队列手动停止后只安排一次前进。
+- `_currentPlaybackIsManifestItem` / `_biliManifestPlaybackLocked`：当前播放是否确实属于 B 站多 P manifest，不能只看标题猜测。
+- `_ignorePlaybackUrlWhileStopped`：停止阶段播放器仍可能短暂保留旧 URL，此时不能据此重建列表。
+- 请求模式、请求 URL 与待处理索引：异步下载回调必须验证自己仍对应当前请求，旧回调不得覆盖新输入。
+
+延迟一帧或等待 0.35 秒只能用于让 YamaPlayer 完成状态提交，不能充当业务真相。凡是使用延迟回调，都必须在回调执行时再次检查 Owner、Stopped、IsLoading、Queue 长度、请求身份和 pending 标志。
+
+### 列表被缩成单项的根因
+
+开发中最顽固的回归是：完整 B 站多 P 或网易云歌单已经显示，点击某项后却只剩当前一项。出现过的根因包括：
+
+- 把当前 `/player/?vcrid=...` 的文本响应当成新的 manifest 来源重新解析。
+- 播放开始或停止时再次把当前媒体 URL 当成用户的新输入。
+- 解析队列占位条目标题时临时覆盖 `_parts/_vcrids`，异步完成后没有恢复原 manifest。
+- 网易云第一首开始播放时，被单曲 metadata 响应误判为新的单曲列表。
+- 非 Owner 客户端收到停止事件后清除了共享列表状态。
+
+解决方式不是再增加一个固定秒数，而是保存和恢复完整的 standalone manifest、区分 manifest source 与 current playback、给解析请求标注用途，并让清空操作只在明确的新来源确认或真正的用户操作中发生。
+
+### B 站与网易云不能共用完全相同的结束策略
+
+- B 站多 P 属于一个保留的轻量组。P1 到 Pn 顺序播放，最后一 P 后继续排在它后面的普通视频；没有后续项目时停止。多 P 条目只有用户点击 `×` 或清空队列时才删除。
+- 普通单 P/独立视频是一次性 Queue 条目，播放完成后可以消失。
+- 网易云歌单是排他的整表模式，顺序模式下最后一曲回到第一曲；切换“单项循环”时只循环当前歌曲。
+- 网易云单曲可以作为普通项目与 B 站视频共存，但完整网易云歌单载入时应清理原普通队列，避免两套循环所有权互相竞争。
+- 在网易云歌单播放期间追加 B 站项目时，必须先保留当前歌单数组和当前音频，解析完成后再决定排队或切换；不能先清 UI 再等待新视频成功。
+
+Provider 需要在 manifest 解析和真正播放开始时各确认一次。只在首次输入时判断 provider，会在队列切歌、后来加入玩家恢复或播放 URL 被 YamaPlayer 规范化后把网易云歌词走回 B 站弹幕逻辑。
+
+### 网易云歌词复用弹幕链路
+
+- 后端把网易云歌词转换成 `#YBDM/1`，歌词行使用 `mode=4`。Unity 不需要维护第二套字幕解析器，而是复用现有时间轴、对象池和底部静态弹幕渲染。
+- `SetExternalAudioMode(true)` 是自动状态，不是让世界用户手动开关。它只阻止弹幕模块错误请求原始歌单 JSON，不能阻止已经加载歌词的 Update、计时和渲染。
+- 选中歌曲、自动下一曲、多人恢复当前曲目时，都必须用预生成的 `_vcridUrls[vcrid]` 调用现有 `LoadDanmakuUrl(VRCUrl)`。
+- 原文和翻译可能拥有同一时间戳。底部歌词需要稳定的专用行位和合适的存活时间，不能沿用普通顶部/底部弹幕“每条出现后固定数秒消失并逐行堆叠”的全部行为。
+- 字幕位置、第二行显示和持续到下一句等调整只能改歌词 mode 的布局/生命周期，不能顺手改变普通 B 站弹幕透明度、描边、字体材质或轨道算法。
+
+### 多人同步的正确粒度
+
+- Pages 组件使用 Manual Sync。点击条目前先取得 Pages 组件、YamaPlayer Controller 以及需要修改的 Queue/History 所有权，再写同步字段并发送事件。
+- 不同步完整标题数组和几百个条目。只同步 manifest 来源、模式、当前 `vcrid`、队列标题/来源、修订号和删除的 manifest ID；后来加入玩家根据来源重新下载清单。
+- 当前浏览页 `_pageOffset` 与 `_pageViewPinned` 是本地 UI 偏好，不能同步。否则一个玩家翻页会把全房间玩家的面板一起拉走。
+- 非 Owner 的 `OnVideoStop`、下载失败或本地 UI 操作不能清空公共清单。共享状态清空必须由拥有者在明确条件下发布。
+- “视频同步正确”和“列表高亮正确”是两个验收项。媒体由 YamaPlayer 同步，Pages 组件仍要用实际播放 `vcrid` 恢复高亮，不能只同步数组下标。
+
+### 输入框、字体和 UI 的隐藏成本
+
+- YamaPlayer 原有 Top/Bottom URL Input 与组件自己的 `Queue URL Input` 是不同职责。前两者仍由用户按世界布局手动拖入；生成器创建的 Queue 输入框必须自动绑定到 `YamaBiliUrlPrefixHelper3` 和 `YamaBiliPagesPlaylist3`。
+- 输入框第一次打开把 WASD 移动键录进去，是焦点、选中时机和预填动作竞争的结果，不是 URL 内容解析问题。应沿用 YamaPlayer 的输入生命周期，在 Select 前后正确 Prime/Reset，并在提交、取消、错误后恢复空闲显示和解析前缀。
+- 错误 URL 不能永久留在输入框，也不能让下一次提交继续使用旧值。错误路径与成功路径都必须走统一 Reset。
+- “视频链接”现在是集成队列输入，不再是早期的 URL Fill On/Off 按钮。旧 `_urlPrefixToggleButtonLabel` 只为兼容旧对象保留，生成的新 UI 不应再显示过时开关。
+- Unity 场景中中文显示成方框，主要是 TMP 字体资产缺少对应 glyph/atlas，不是 C# 字符串损坏。1.10 的 Noto Sans SC 字体只用于组件 UI；不得替换弹幕 Font Atlas 或修改弹幕材质。
+- 标题走马灯应根据 `preferredWidth > viewportWidth` 判断真实溢出，并配合 Mask/RectMask 裁切。按“22 个字符”截断无法正确处理中文、日文、拉丁字母和不同字宽。
+- UI 生成器要保持按钮等宽、箭头方向/位置一致、删除区有稳定点击范围。Transform、Canvas、Collider 与子对象位置必须统一使用同一局部坐标系，否则移动父级后会出现碰撞体或文字漂移。
+
+### 平板适配不能再塞回普通 PC 包
+
+可拾取平板曾经尝试通过修改普通 `FindPlayerRoot()` 或直接使用 `selected.transform.root` 解决跟随问题，结果破坏 Controller 数据来源、模块挂载比例或弹幕渲染。PC 端“外部显示面跟随”与 Android/Quest 平板的材质、透明度和缩放问题并不是同一个问题。
+
+最终纪律保持不变：YamaPlayer PC 使用 `YamaBiliDanmakuV3` 1.10；Android/Quest 普通播放器继续使用 1.03；可拾取平板使用独立 `YamaBiliDanmakuTabletV3`。三者不能因为一个场景修复就互相复制生成器或材质参数。
+
+### 日志优先于现象描述
+
+世界内看到的现象经常只能说明最后结果，不能说明先发生了哪个事件。例如“P3 变成单项”可能是 manifest 被清空、显示缓存漏项、错误 `vcrid`、旧下载回调覆盖，或 UI 跳到了只有一项的尾页。
+
+以后排查播放列表必须同时记录并对照：
+
+- 请求 URL、请求模式、下载成功/失败和响应 manifest 类型。
+- 当前 Controller URL、Track 标题、Queue 长度、Stopped/IsLoading/Loop。
+- manifest 项目数、selected index、selected vcrid、同步 vcrid 和当前页偏移。
+- B 站混合模式、网易云独立模式、internal switch、natural end 和 pending advance 标志。
+- 统一显示缓存中 manifest/current/queue 各自数量与最后一个来源类型。
+
+此次 `vcrid=150 -> 50`、末尾重复当前项、点击项目后高亮丢失和“音乐还在播放但列表已空”等问题，都是结合 VRChat Player log 后才从多个相似猜测中定位。用户描述应作为复现入口，最终修复依据必须回到日志时间线和实际代码路径。
+
+### 1.10 播放列表回归矩阵
+
+以后修改 `YamaBiliPagesPlaylist3` 后，至少覆盖以下顺序测试，不能只验证一个两 P 视频：
+
+1. B 站单 P：空闲输入、排在普通视频前后、自然结束、手动停止、无效 URL 后重新输入。
+2. B 站多 P：2P、90P、150P；重点点击 P2、P3、P52、P90、P150，并核对画面、弹幕和高亮是同一项。
+3. 多 P 首次加载期间翻到后页；加载第一 P 或标题回填完成后，面板不得跳回首页。
+4. 单 P 在多 P 前、多 P 在单 P 前、多 P 后追加多个普通视频；最后一 P 应继续后续 Queue，不应重复 P1，也不应制造一个重复的“当前项”。
+5. 多 P 播放中点击其他 P、重复点击当前 P、删除非当前 P、删除当前 P、清空队列和播放失败。
+6. 网易云单曲：标题、播放、歌词、自然结束以及与 B 站单 P 混排。
+7. 网易云歌单：首次进入世界后直接解析、立即点击第一曲和后页曲目、自动下一曲、最后一曲回到第一曲、单项循环切换、歌词原文/翻译与切歌更新。
+8. 网易云歌单播放时追加 B 站单 P/多 P；当前音乐和歌单不能提前消失，切到新项目后不能把整个面板清空。
+9. 暂停/继续、拖动进度、手动 Stop、自然 End、视频错误和快速连续点击；每种情况下检查是否只前进一次。
+10. 两名以上玩家：Owner 点击、非 Owner 点击、Owner 离开、后来加入、不同玩家各自翻页；核对媒体同步、列表内容和当前高亮。
+11. 超长中英日标题、缺字字符、走马灯、六项分页、左右箭头、单项删除和清空按钮。
+12. PC 镜子可读、普通视角、B 站彩色/顶部/底部弹幕和网易云歌词；不得因播放列表改动改变透明度、描边或弹幕材质。
+13. Android/Quest 普通播放器和独立 Tablet 包分别测试，不得用 PC 1.10 的结果替代移动端验收。
+14. 最后检查 VRChat log 中没有重复请求风暴、连续所有权争抢、同一 Stop 被处理两次、错误 `vcrid` 或显示缓存数量异常。
+
 ## 后续修改检查表
 
 每次发布前至少确认：
@@ -542,7 +692,7 @@ VizVid 在视频加载失败或 URL 无效后，`Core.Url` 可能仍保留失败
 7. 修改视觉参数后执行 Apply 菜单并检查材质。
 8. Top/Bottom URL 输入框手动绑定正确。
 9. Docker `/health`、`/player/` 和强制 `__dm=1` 正常。
-10. 如果服务端没有变化，Unity 组件 release 只发布同版本 Unity ZIP，并在 release notes 中说明继续使用 v1.0.0 server。
+10. 如果服务端没有变化，Unity 组件 Release 只发布对应适配线的 Unity ZIP，并在 Release Notes 中说明继续使用当前 v1.0.3 server；不要把未同步功能的 iwaSync3、VizVid 或 Tablet 包混入 YamaPlayer Release。
 
 ## 不应重新引入的方案
 
