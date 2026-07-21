@@ -10,7 +10,7 @@
 
 示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-YamaPlayer PC / 桌面端当前正式稳定版为 **1.10**，由已验证的 `beta13.43` 转正并发布到 GitHub。本次 1.10 Release **只包含 YamaPlayer PC / 桌面端适配包**；iwaSync3 和 VizVid 仍保持当前公开版本。Android / Quest 普通大屏或非可拾取播放器继续使用 **1.03**；Android / Quest 可拾取平板场景请使用独立的 `YamaBiliDanmakuTabletV3` 平板包，该包不包含在 1.10 Release 中。
+YamaPlayer PC / 桌面端当前正式稳定版为 **1.11**，由 `alpha1.1` 原样晋升并发布到 GitHub。本次 1.11 Release **只包含 YamaPlayer PC / 桌面端适配包**；iwaSync3 和 VizVid 保持当前公开版本。Android / Quest 普通大屏或非可拾取播放器继续使用 **1.03**；Android / Quest 可拾取平板场景继续使用独立的 `YamaBiliDanmakuTabletV3` 平板包。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
@@ -18,7 +18,7 @@ YamaPlayer PC / 桌面端当前正式稳定版为 **1.10**，由已验证的 `be
 
 如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，需要安装你实际使用的播放器：
 
-- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：使用 `YamaBiliDanmakuV3` 或 `YamaBiliDanmakuTabletV3` 时需要。
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：使用 `YamaBiliDanmakuV3` 或 `YamaBiliDanmakuTabletV3` 时需要；本项目 PC 适配固定以 YamaPlayer 上游 `1.5.18` 为兼容参考。
 - iwaSync3：使用 `IwaBiliDanmakuV3` 时需要。
 - VizVid：使用 `VizVidBiliDanmakuV3` 时需要。
 - TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
@@ -37,8 +37,8 @@ https://danmaku.paulkoishi.com/player/?url=
 - B 站视频解析，并可为本组件返回对应 B 站弹幕。
 - B 站直播解析，但直播暂不返回弹幕。
 - 网易云音乐单曲解析。
-- 网易云音乐歌单解析。YamaPlayer 1.10 可在世界内显示歌单并通过后端 `vcrid` 播放对应曲目。
-- B 站多 P、合集与列表解析。YamaPlayer 1.10 可显示条目标题、切换条目并连续播放。
+- 网易云音乐歌单解析。YamaPlayer 1.11 可在世界内显示歌单并通过后端 `vcrid` 播放对应曲目。
+- B 站多 P、合集与列表解析。YamaPlayer 1.11 可显示条目标题、切换条目并连续播放。
 
 如果你自行部署了本项目的 `server/` 后端，把上面的域名替换成自己的域名，也可以获得同样的解析能力。
 
@@ -55,7 +55,10 @@ https://danmaku.paulkoishi.com/player/?url=
 
 当前本地包与公开包状态：
 
-- `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`：YamaPlayer PC / 桌面端正式源码包，也是 1.10 Release 唯一的 Unity 适配包。
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`：当前 YamaPlayer PC / 桌面端正式源码包及 GitHub v1.11 Release 资产，由 `alpha1.1` 原样晋升；包含 YamaPlayer 1.5.18 Top/Bottom URL Input 精确自动定位，并将弹幕/歌词根 Canvas Order 设为 `-1`，避免与 YamaPlayer 点击后出现的 Order `0` 灰色交互 UI 同级竞争。
+- `alpha1.1.zip`：正式 1.11 的逐字节晋升来源包，继续保留用于追溯。
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`：上一版金黑 UI 正式包。
+- `beta14.02.zip`：当前金黑测试包；保留 beta14.01 的全部金黑视觉和 URL Input 自动定位，同样只把弹幕/歌词根 Canvas Order 从 `0` 调为 `-1`。
 - `PaulKoiPlayer-IwaBiliDanmakuV3-1.04beta.zip`：iwaSync3 PC / 桌面端源码包。
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`：VizVid PC / 桌面端源码包。
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`：YamaPlayer Android / Quest 可拾取平板专用包。
@@ -64,7 +67,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ### Android / Quest 使用说明
 
-YamaPlayer 1.10 沿用已验证的 PC / 桌面端外部显示面挂载规则：如果你选中的是播放器自己的对象，就按播放器根节点生成；如果你选中的是外部平板或显示面，就挂到当前选中的显示面 Transform。
+YamaPlayer 1.11 沿用已验证的 PC / 桌面端外部显示面挂载规则：如果你选中的是播放器自己的对象，就按播放器根节点生成；如果你选中的是外部平板或显示面，就挂到当前选中的显示面 Transform。
 
 Android / Quest 普通大屏、固定屏幕或非可拾取播放器继续使用 1.03。只有 Android / Quest 可拾取平板需要导入独立的 `YamaBiliDanmakuTabletV3` 包。该包使用独立 namespace、类名、shader 和菜单，生成后需要在 Inspector 中手动拖入播放用的 YamaPlayer `Controller` 作为数据源。
 
@@ -81,7 +84,7 @@ Android / Quest 普通大屏、固定屏幕或非可拾取播放器继续使用 
 - 仅更新正在显示的弹幕，降低每帧遍历开销
 - URL 输入框可预填自定义解析服务前缀
 - 提供弹幕开启、关闭和切换事件，方便连接世界内自定义 UI
-- YamaPlayer 1.10 支持 B 站多 P/合集/list 与网易云音乐歌单，列表每页最多显示 6 项
+- YamaPlayer 1.11 支持 B 站多 P/合集/list 与网易云音乐歌单，列表每页最多显示 6 项
 - 支持顺序播放与单项循环，并提供首页、上一页和下一页操作；网易云歌单顺序播放时整表循环，B 站多 P 到末项后继续后续队列或停止
 - Pages 状态使用轻量 Udon 手动同步，支持多人当前项目提示和后来加入玩家恢复列表
 
@@ -102,7 +105,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 安装
 
-1. YamaPlayer PC / 桌面端使用本地 `1.10.zip`；iwaSync3 和 VizVid 继续使用各自当前版本。
+1. YamaPlayer PC / 桌面端使用本地 `1.11.zip`；iwaSync3 和 VizVid 继续使用各自当前版本。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -115,16 +118,16 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ![在 YamaPlayer 上创建弹幕模块](docs/images/install-yamaplayer-menu.png)
 
-## 手动绑定 URL 输入框
+## URL 输入框绑定
 
-预输入前缀组件的两个 URL 输入框必须在 Inspector 中**手动拖入**。不要依赖自动查找或组件顺序猜测，不同 YamaPlayer 版本或自定义预制体的层级可能不同。
+正式 1.11 与金黑 `beta14.02` 会针对原样 YamaPlayer 1.5.18，从 `UIController` 权威引用或下表精确路径自动补齐预输入前缀组件中为空的两个 URL 输入框；已有手动引用不会被覆盖。自定义或改名预制体无法精确匹配时仍应手动拖入，任何版本都不要依赖组件顺序或宽泛名称猜测。
 
 | Inspector 字段 | YamaPlayer 默认对象路径 |
 | --- | --- |
 | `Top Url Input Field` | `ScreenUI/Canvas/Control/Main/Top/UrlInput` |
 | `Bottom Url Input Field` | `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput` |
 
-两个对象都应拖入其自身的 `VRC URL Input Field` 组件。
+需要手动回退时，两个对象都应拖入其自身的 `VRC URL Input Field` 组件。
 
 ![手动绑定 YamaPlayer 的两个 URL 输入框](docs/images/url-prefix-helper-bindings.png)
 
@@ -152,7 +155,7 @@ https://danmaku.paulkoishi.com/player/?url=<网易云歌单链接>&p=1
 
 ## 常用设置
 
-> **这些设置只能在 Unity 编辑器中调整。** YamaPlayer 1.10 生成轻量的玩家控制与播放列表界面。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移仍需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
+> **这些设置只能在 Unity 编辑器中调整。** YamaPlayer 1.11 生成轻量的玩家控制与播放列表界面。字体大小、透明度、粗细、描边、轨道数、滚动速度和时间偏移仍需要由世界作者在 Unity Inspector 中配置，并在上传世界前保存。
 
 | 设置 | 默认值 | 说明 |
 | --- | ---: | --- |
@@ -190,11 +193,11 @@ Yamadev > YamaPlayer > Apply Selected Bili Danmaku Visual Style
 
 ## 世界内弹幕控制
 
-YamaPlayer 1.10 会在 `Bili Danmaku Module` 下生成中文的轻量控制界面：
+YamaPlayer 1.11 会在 `Bili Danmaku Module` 下生成中文的轻量控制界面：
 
 - `弹幕范围：全屏 / 半屏 / 1/4屏`：循环切换显示区域。
 - `弹幕：开启 / 关闭`：切换弹幕显示与隐藏。
-- `视频链接`：打开组件自己的队列输入框，使用预置解析前缀把新链接加入播放队列；YamaPlayer 原有 Top/Bottom URL Input 仍按需手动绑定。
+- `输入链接`：打开组件自己的队列输入框，使用预置解析前缀把新链接加入播放队列；正式 1.11 与 beta14.02 会为原样 YamaPlayer 1.5.18 精确补齐 Top/Bottom URL Input 空引用，并保留自定义布局的手动绑定回退。
 - `播放列表`：显示 B 站分 P/合集/list 或网易云音乐歌单；可切换顺序播放和单项循环。
 
 切换显示区域时，已经发射出来的弹幕不会被清空；后续新弹幕会按新的区域输出。
@@ -232,6 +235,14 @@ UdonSharp > Compile All UdonSharp Programs
 - 不要混用旧版组件和旧版 U# Program Asset。
 
 ## 当前版本说明
+
+YamaPlayer 1.11 由 `alpha1.1` 原样晋升，在 1.10 播放逻辑基础上增加：
+
+- 正式 UI 改为纯黑、透明黑、白色描边和纯白字体。
+- 顶部三个控件共用一整条淡黑圆角背景，第三格改为“输入链接”，并与前两个控件共用 TMP 字体、图标和布局样式。
+- 播放列表文字统一为纯白；当前项继续显示 `> `，并以 `0.14` 对 `0.07` 的行背景明暗区分当前项与普通项。
+- 针对原样 YamaPlayer 1.5.18，从 `UIController` 权威序列化字段或两条已验证精确路径自动补齐为空的 Top/Bottom URL Input；已有手动绑定优先，自定义布局继续手动回退。
+- 弹幕与网易云歌词根 Canvas 的 `sortingOrder` 从 1.10 的 `20` 调整为 `-1`，让 YamaPlayer 点击后出现的 Order `0` 灰色交互 UI 稳定覆盖弹幕；弹幕 TMP Shader 未改变。
 
 YamaPlayer 1.10 相比 1.04beta 主要增加：
 
@@ -277,7 +288,7 @@ v1.0.0 是首个统一发布版本，同时提供 Unity 组件与对应的 Docke
 ## 鸣谢与相关链接
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/)：当前公共解析服务状态页；如果无法访问，说明当前公共服务不可用。
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：当前 YamaPlayer 1.10 适配并测试的 VRChat 视频播放器。
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer)：本项目 PC 适配固定参考上游 YamaPlayer 1.5.18；当前组件正式版本为 1.11。
 - [music.znnu.com](https://music.znnu.com/)：服务端网易云音乐解析所使用的第三方服务。
 - [yionchi](https://github.com/yionchi)：`music.znnu.com` 相关服务作者。
 

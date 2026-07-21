@@ -21,6 +21,7 @@ namespace YamaBiliDanmakuV3.Editor
     private const int PagesButtonCount = 6;
     private const float CanvasWidth = 1750f;
     private const float CanvasHeight = 980f;
+    private const int DanmakuCanvasSortingOrder = -1;
     private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?url=";
     private const string DefaultPagesApiPrefix = DefaultUrlPrefix;
     private const string DefaultVcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?vcrid=";
@@ -35,6 +36,12 @@ namespace YamaBiliDanmakuV3.Editor
     private const string MirrorReadableShaderName = "YamaBiliDanmaku/TMP Mirror Readable";
     private const string ButtonShaderName = "YamaBiliDanmaku/UI Button";
     private const string ControlsCanvasName = "Danmaku Controls Canvas";
+    private const string QueueInputTextMaskName = "Input Text Mask";
+    private const string YamaPlayer1518UiControllerTypeName = "Yamadev.YamaStream.UI.UIController";
+    private const string YamaPlayer1518ScreenUiName = "ScreenUI";
+    private const string YamaPlayer1518InternalName = "Internal";
+    private const string YamaPlayer1518TopUrlInputPath = "ScreenUI/Canvas/Control/Main/Top/UrlInput";
+    private const string YamaPlayer1518BottomUrlInputPath = "ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput";
     private const float ControlsWidth = 420f;
     private const float ControlsHeight = 70f;
     private const float ControlsPadding = 6f;
@@ -52,6 +59,7 @@ namespace YamaBiliDanmakuV3.Editor
     private const float PagesHeaderGap = 14f;
     private const float PagesHeaderContentWidth = PagesPanelWidth - 24f - PagesHeaderActionWidth - PagesHeaderRightPadding - PagesHeaderGap;
     private const string RoundedSpriteGuid = "cb6af20af8ed3f6438490dcef842bdde";
+    private const float PanelSpritePixelsPerUnitMultiplier = 1f;
     private const string DisplayAreaIconGuid = "23aa86979de8cf94db763545b72e0c9b";
     private const string DanmakuIconGuid = "49e3e4d5882a85e4d8416c06d008c51f";
     private const string UrlFillIconGuid = "ab97ea5771096a348a20dec1cac271dd";
@@ -67,13 +75,17 @@ namespace YamaBiliDanmakuV3.Editor
     private const float DefaultWeightBold = 0.28f;
     private const float DefaultUnderlayDilate = 0.16f;
     private const float DefaultUnderlaySoftness = 0.03f;
-    private const string RequiredUiCharacters = "播放列表队首页顺序单项循环上一下弹幕区域全屏半四分之显示开关链接填充等待正在加载解析入删除保留终止第共视频已返回暂无持当前内容没有条展超时按未找到器控制切换为即将失败识别歌曲信息读取空目网易云后续最多所选效缺少地址录不存限变化请重试从同步清中名命可用的该称并稍候经0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-/:：·，。！？（）()[]<>｜ ";
+    private const string RequiredUiCharacters = "播放列表队首页顺序单项循环上一下弹幕区域全屏半四分之显示开关输入链接填充等待正在加载解析删除保留终止第共视频已返回暂无持当前内容没有条展超时按未找到器控制切换为即将失败识别歌曲信息读取空目网易云后续最多所选效缺少地址录不存限变化请重试从同步清中名命可用的该称并稍候经0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-/:：·，。！？（）()[]<>｜ ";
 
-    private static readonly Color UiAccentColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f);
-    private static readonly Color UiTextColor = new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
-    private static readonly Color UiMutedTextColor = new Color(200f / 255f, 180f / 255f, 154f / 255f, 0.76f);
-    private static readonly Color UiButtonColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.07f);
-    private static readonly Color UiDividerColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.28f);
+    private static readonly Color UiAccentColor = new Color(1f, 1f, 1f, 1f);
+    private static readonly Color UiTextColor = new Color(1f, 1f, 1f, 1f);
+    private static readonly Color UiMutedTextColor = new Color(1f, 1f, 1f, 1f);
+    private static readonly Color UiButtonColor = new Color(1f, 1f, 1f, 0.07f);
+    private static readonly Color UiDividerColor = new Color(1f, 1f, 1f, 0.24f);
+    private static readonly Color UiPanelColor = new Color(0f, 0f, 0f, 0.985f);
+    private static readonly Color UiNavigationColor = new Color(0f, 0f, 0f, 0.97f);
+    private static readonly Color UiHighlightedColor = new Color(1f, 1f, 1f, 1f);
+    private static readonly Color UiPressedColor = new Color(0.58f, 0.58f, 0.58f, 1f);
 
     [MenuItem("Yamadev/YamaPlayer/Create Bili Danmaku Module", false, 2000)]
     public static void CreateRig()
@@ -174,7 +186,7 @@ namespace YamaBiliDanmakuV3.Editor
 
       Canvas canvas = root.AddComponent<Canvas>();
       canvas.renderMode = RenderMode.WorldSpace;
-      canvas.sortingOrder = 20;
+      canvas.sortingOrder = DanmakuCanvasSortingOrder;
       CanvasScaler scaler = root.AddComponent<CanvasScaler>();
       scaler.dynamicPixelsPerUnit = 10f;
 
@@ -226,7 +238,7 @@ namespace YamaBiliDanmakuV3.Editor
       status.raycastTarget = false;
       status.alignment = TextAlignmentOptions.Left;
       status.fontSize = 22f;
-      status.color = new Color(1f, 1f, 1f, 0.75f);
+      status.color = new Color(1f, 1f, 1f, 1f);
       status.text = "idle";
       statusObject.SetActive(false);
 
@@ -505,8 +517,8 @@ namespace YamaBiliDanmakuV3.Editor
       button.transition = Selectable.Transition.ColorTint;
       ColorBlock colors = button.colors;
       colors.normalColor = Color.white;
-      colors.highlightedColor = new Color(1f, 0.9f, 0.74f, 1f);
-      colors.pressedColor = new Color(0.82f, 0.68f, 0.52f, 1f);
+      colors.highlightedColor = UiHighlightedColor;
+      colors.pressedColor = UiPressedColor;
       colors.selectedColor = colors.highlightedColor;
       colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
       button.colors = colors;
@@ -753,7 +765,8 @@ namespace YamaBiliDanmakuV3.Editor
     {
       if (controlsObject == null) return null;
 
-      GameObject inputObject = CreateOrFindChild(controlsObject, "Queue URL Input", typeof(RectTransform), typeof(Image), typeof(Mask), typeof(VRCUrlInputField));
+      GameObject inputObject = CreateOrFindChild(controlsObject, "Queue URL Input", typeof(RectTransform), typeof(Image), typeof(VRCUrlInputField));
+      DestroyComponent<Mask>(inputObject);
       DestroyComponent<RectMask2D>(inputObject);
       RectTransform inputRect = inputObject.GetComponent<RectTransform>();
       inputRect.anchorMin = new Vector2(0f, 1f);
@@ -767,15 +780,38 @@ namespace YamaBiliDanmakuV3.Editor
       Image background = inputObject.GetComponent<Image>();
       background.sprite = null;
       background.type = Image.Type.Simple;
-      background.color = new Color(UiAccentColor.r, UiAccentColor.g, UiAccentColor.b, 0.025f);
+      background.color = new Color(0f, 0f, 0f, 0f);
       background.raycastTarget = true;
       Material material = GetOrCreateButtonMaterial();
       if (material != null) background.material = material;
 
-      Mask inputMask = inputObject.GetComponent<Mask>();
-      inputMask.showMaskGraphic = true;
+      GameObject inputMaskObject = CreateOrFindChild(inputObject, QueueInputTextMaskName, typeof(RectTransform), typeof(Image), typeof(Mask));
+      inputMaskObject.transform.SetAsFirstSibling();
+      DestroyComponent<RectMask2D>(inputMaskObject);
+      RectTransform inputMaskRect = inputMaskObject.GetComponent<RectTransform>();
+      inputMaskRect.anchorMin = Vector2.zero;
+      inputMaskRect.anchorMax = Vector2.one;
+      inputMaskRect.offsetMin = Vector2.zero;
+      inputMaskRect.offsetMax = Vector2.zero;
+      inputMaskRect.localRotation = Quaternion.identity;
+      inputMaskRect.localScale = Vector3.one;
 
-      GameObject textObject = CreateOrFindChild(inputObject, "Text", typeof(RectTransform), typeof(Text));
+      Image inputMaskImage = inputMaskObject.GetComponent<Image>();
+      inputMaskImage.sprite = null;
+      inputMaskImage.type = Image.Type.Simple;
+      inputMaskImage.color = Color.white;
+      inputMaskImage.raycastTarget = false;
+      if (material != null) inputMaskImage.material = material;
+
+      Mask inputMask = inputMaskObject.GetComponent<Mask>();
+      inputMask.showMaskGraphic = false;
+
+      Transform legacyText = inputObject.transform.Find("Text");
+      if (legacyText != null) UnityEngine.Object.DestroyImmediate(legacyText.gameObject);
+      Transform legacyPlaceholder = inputObject.transform.Find("Placeholder");
+      if (legacyPlaceholder != null) UnityEngine.Object.DestroyImmediate(legacyPlaceholder.gameObject);
+
+      GameObject textObject = CreateOrFindChild(inputMaskObject, "Text", typeof(RectTransform), typeof(Text));
       RectTransform textRect = textObject.GetComponent<RectTransform>();
       textRect.anchorMin = new Vector2(0f, 0f);
       textRect.anchorMax = new Vector2(1f, 0f);
@@ -798,7 +834,13 @@ namespace YamaBiliDanmakuV3.Editor
       inputText.raycastTarget = false;
       inputText.text = "";
 
-      GameObject placeholderObject = CreateOrFindChild(inputObject, "Placeholder", typeof(RectTransform), typeof(Text));
+      Transform existingPlaceholder = inputMaskObject.transform.Find("Placeholder");
+      if (existingPlaceholder != null && existingPlaceholder.GetComponent<Text>() != null)
+      {
+        UnityEngine.Object.DestroyImmediate(existingPlaceholder.gameObject);
+      }
+
+      GameObject placeholderObject = CreateOrFindChild(inputMaskObject, "Placeholder", typeof(RectTransform), typeof(TextMeshProUGUI));
       RectTransform placeholderRect = placeholderObject.GetComponent<RectTransform>();
       placeholderRect.anchorMin = new Vector2(0f, 0f);
       placeholderRect.anchorMax = new Vector2(1f, 0f);
@@ -808,17 +850,8 @@ namespace YamaBiliDanmakuV3.Editor
       placeholderRect.localRotation = Quaternion.identity;
       placeholderRect.localScale = Vector3.one;
 
-      Text placeholder = placeholderObject.GetComponent<Text>();
-      placeholder.font = legacyFont;
-      placeholder.fontSize = 12;
-      placeholder.fontStyle = FontStyle.Bold;
-      placeholder.alignment = TextAnchor.MiddleCenter;
-      placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
-      placeholder.verticalOverflow = VerticalWrapMode.Truncate;
-      placeholder.supportRichText = false;
-      placeholder.color = UiAccentColor;
-      placeholder.raycastTarget = false;
-      placeholder.text = "视频链接";
+      TextMeshProUGUI placeholder = placeholderObject.GetComponent<TextMeshProUGUI>();
+      ConfigureControlLabelVisual(placeholder, "输入链接", true);
 
       GameObject idleLabelObject = CreateOrFindChild(inputObject, "Idle Label", typeof(RectTransform), typeof(Text));
       RectTransform idleLabelRect = idleLabelObject.GetComponent<RectTransform>();
@@ -840,30 +873,29 @@ namespace YamaBiliDanmakuV3.Editor
       idleLabel.supportRichText = false;
       idleLabel.color = UiAccentColor;
       idleLabel.raycastTarget = false;
-      idleLabel.text = "视频链接";
+      idleLabel.maskable = false;
+      idleLabel.text = "";
+      idleLabel.enabled = false;
 
-      GameObject iconObject = CreateOrFindChild(inputObject, "Icon", typeof(RectTransform), typeof(Image));
-      RectTransform iconRect = iconObject.GetComponent<RectTransform>();
-      iconRect.anchorMin = new Vector2(0.5f, 1f);
-      iconRect.anchorMax = new Vector2(0.5f, 1f);
-      iconRect.pivot = new Vector2(0.5f, 1f);
-      iconRect.anchoredPosition = new Vector2(0f, -5f);
-      iconRect.sizeDelta = new Vector2(26f, 26f);
-      iconRect.localRotation = Quaternion.identity;
-      iconRect.localScale = Vector3.one;
+      GameObject idleVisualObject = CreateOrFindChild(idleLabelObject, "Label", typeof(RectTransform), typeof(TextMeshProUGUI));
+      RectTransform idleVisualRect = idleVisualObject.GetComponent<RectTransform>();
+      idleVisualRect.anchorMin = Vector2.zero;
+      idleVisualRect.anchorMax = Vector2.one;
+      idleVisualRect.pivot = new Vector2(0.5f, 0.5f);
+      idleVisualRect.anchoredPosition = Vector2.zero;
+      idleVisualRect.sizeDelta = Vector2.zero;
+      idleVisualRect.localRotation = Quaternion.identity;
+      idleVisualRect.localScale = Vector3.one;
+      TextMeshProUGUI idleVisualLabel = idleVisualObject.GetComponent<TextMeshProUGUI>();
+      ConfigureControlLabelVisual(idleVisualLabel, "输入链接", false);
 
-      Image icon = iconObject.GetComponent<Image>();
-      icon.sprite = LoadSpriteByGuid(UrlFillIconGuid);
-      icon.color = UiAccentColor;
-      icon.raycastTarget = false;
-      icon.preserveAspect = true;
-      if (material != null) icon.material = material;
-      iconObject.SetActive(icon.sprite != null);
+      CreateOrFindControlIcon(inputObject, UrlFillIconGuid);
 
       VRCUrlInputField inputField = inputObject.GetComponent<VRCUrlInputField>();
       SerializedObject serialized = new SerializedObject(inputField);
       SerializedProperty targetGraphic = serialized.FindProperty("m_TargetGraphic");
       if (targetGraphic != null) targetGraphic.objectReferenceValue = background;
+      SetInt(serialized, "m_Transition", 0);
       SerializedProperty textComponent = serialized.FindProperty("m_TextComponent");
       if (textComponent != null) textComponent.objectReferenceValue = inputText;
       SerializedProperty placeholderProperty = serialized.FindProperty("m_Placeholder");
@@ -921,7 +953,7 @@ namespace YamaBiliDanmakuV3.Editor
       if (frame == null) frame = backgroundObject.AddComponent<Image>();
       frame.sprite = rounded;
       frame.type = rounded == null ? Image.Type.Simple : Image.Type.Sliced;
-      frame.pixelsPerUnitMultiplier = 2f;
+      frame.pixelsPerUnitMultiplier = PanelSpritePixelsPerUnitMultiplier;
       frame.color = UiAccentColor;
       frame.raycastTarget = true;
       if (material != null) frame.material = material;
@@ -938,8 +970,8 @@ namespace YamaBiliDanmakuV3.Editor
       Image fill = fillObject.GetComponent<Image>();
       fill.sprite = rounded;
       fill.type = rounded == null ? Image.Type.Simple : Image.Type.Sliced;
-      fill.pixelsPerUnitMultiplier = 2f;
-      fill.color = new Color(0.012f, 0.011f, 0.016f, 0.985f);
+      fill.pixelsPerUnitMultiplier = PanelSpritePixelsPerUnitMultiplier;
+      fill.color = UiPanelColor;
       fill.raycastTarget = false;
       if (material != null) fill.material = material;
     }
@@ -973,7 +1005,7 @@ namespace YamaBiliDanmakuV3.Editor
 
       Image image = buttonObject.GetComponent<Image>();
       if (image == null) image = buttonObject.AddComponent<Image>();
-      image.color = new Color(UiAccentColor.r, UiAccentColor.g, UiAccentColor.b, 0.025f);
+      image.color = new Color(0f, 0f, 0f, 0f);
       image.raycastTarget = true;
       image.sprite = null;
       image.type = Image.Type.Simple;
@@ -987,8 +1019,8 @@ namespace YamaBiliDanmakuV3.Editor
       button.transition = Selectable.Transition.ColorTint;
       ColorBlock colors = button.colors;
       colors.normalColor = Color.white;
-      colors.highlightedColor = new Color(1f, 0.9f, 0.74f, 1f);
-      colors.pressedColor = new Color(0.82f, 0.68f, 0.52f, 1f);
+      colors.highlightedColor = UiHighlightedColor;
+      colors.pressedColor = UiPressedColor;
       colors.selectedColor = colors.highlightedColor;
       colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
       button.colors = colors;
@@ -1014,7 +1046,15 @@ namespace YamaBiliDanmakuV3.Editor
       labelRect.localScale = Vector3.one;
 
       label = labelObject.GetComponent<TextMeshProUGUI>();
+      ConfigureControlLabelVisual(label, labelText, false);
+      CreateOrFindControlIcon(buttonObject, iconGuid);
+    }
+
+    private static void ConfigureControlLabelVisual(TextMeshProUGUI label, string labelText, bool maskable)
+    {
+      if (label == null) return;
       label.raycastTarget = false;
+      label.maskable = maskable;
       label.alignment = TextAlignmentOptions.Center;
       label.fontSize = 12f;
       label.fontStyle = FontStyles.Bold;
@@ -1027,7 +1067,6 @@ namespace YamaBiliDanmakuV3.Editor
       label.fontSizeMax = 12f;
       label.color = UiAccentColor;
       label.text = labelText;
-      CreateOrFindControlIcon(buttonObject, iconGuid);
     }
 
     private static void CreateOrFindControlIcon(GameObject buttonObject, string iconGuid)
@@ -1046,6 +1085,7 @@ namespace YamaBiliDanmakuV3.Editor
       icon.sprite = LoadSpriteByGuid(iconGuid);
       icon.color = UiAccentColor;
       icon.raycastTarget = false;
+      icon.maskable = false;
       icon.preserveAspect = true;
       Material material = GetOrCreateButtonMaterial();
       if (material != null) icon.material = material;
@@ -1095,7 +1135,7 @@ namespace YamaBiliDanmakuV3.Editor
       fillObject.transform.SetSiblingIndex(Mathf.Min(2, panelObject.transform.childCount - 1));
 
       ConfigureNavigationShellImage(frameObject, new Vector2(12f, -216f), new Vector2(PagesPanelWidth - 24f, 32f), rounded, UiAccentColor, material);
-      ConfigureNavigationShellImage(fillObject, new Vector2(14f, -218f), new Vector2(PagesPanelWidth - 28f, 28f), rounded, new Color(0.015f, 0.014f, 0.02f, 0.94f), material);
+      ConfigureNavigationShellImage(fillObject, new Vector2(14f, -218f), new Vector2(PagesPanelWidth - 28f, 28f), rounded, UiNavigationColor, material);
     }
 
     private static void ConfigureNavigationShellImage(GameObject target, Vector2 anchoredPosition, Vector2 size, Sprite rounded, Color color, Material material)
@@ -1470,6 +1510,7 @@ namespace YamaBiliDanmakuV3.Editor
       Button urlPrefixToggleButton;
       TextMeshProUGUI urlPrefixToggleButtonLabel;
       CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
+      ApplyDanmakuCanvasSortingOrder(selected);
 
       Controller controller = FindTargetController();
       Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(selected, controller, null);
@@ -1479,7 +1520,18 @@ namespace YamaBiliDanmakuV3.Editor
       ApplyChineseUiFont(selected);
       EditorUtility.SetDirty(selected);
       SceneView.RepaintAll();
-      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Black-gold UI skin applied. URL Input references were not changed.", "OK");
+      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Black-white UI skin applied. Exact YamaPlayer 1.5.18 URL Input references were repaired when found.", "OK");
+    }
+
+    private static void ApplyDanmakuCanvasSortingOrder(GameObject root)
+    {
+      if (root == null) return;
+      Canvas canvas = root.GetComponent<Canvas>();
+      if (canvas == null) return;
+
+      Undo.RecordObject(canvas, "Align Bili Danmaku Canvas Sorting");
+      canvas.sortingOrder = DanmakuCanvasSortingOrder;
+      EditorUtility.SetDirty(canvas);
     }
 
     [MenuItem("Yamadev/YamaPlayer/Wire Selected Bili URL Prefix Helper", false, 2004)]
@@ -1530,7 +1582,8 @@ namespace YamaBiliDanmakuV3.Editor
         if (queueInputTransform != null)
         {
           queueInput = queueInputTransform.GetComponent<VRCUrlInputField>();
-          Transform textTransform = queueInputTransform.Find("Text");
+          Transform textTransform = queueInputTransform.Find(QueueInputTextMaskName + "/Text");
+          if (textTransform == null) textTransform = queueInputTransform.Find("Text");
           if (textTransform != null) queueInputText = textTransform.GetComponent<Text>();
           Transform idleLabelTransform = queueInputTransform.Find("Idle Label");
           if (idleLabelTransform != null) queueInputIdleLabel = idleLabelTransform.GetComponent<Text>();
@@ -1548,8 +1601,8 @@ namespace YamaBiliDanmakuV3.Editor
       VRCUrlInputField topInput = topProperty == null ? null : topProperty.objectReferenceValue as VRCUrlInputField;
       VRCUrlInputField bottomInput = bottomProperty == null ? null : bottomProperty.objectReferenceValue as VRCUrlInputField;
 
-      // YamaPlayer URL inputs are intentionally assigned by the user. The generated queue input
-      // has the same component type, so never allow it to occupy either manual reference slot.
+      // The generated queue input has the same component type as YamaPlayer's own fields, so it
+      // must never occupy either external reference slot.
       if (queueInput != null && topInput == queueInput)
       {
         topProperty.objectReferenceValue = null;
@@ -1559,6 +1612,33 @@ namespace YamaBiliDanmakuV3.Editor
       {
         bottomProperty.objectReferenceValue = null;
         bottomInput = null;
+      }
+
+      // YamaPlayer 1.5.18 already serializes the two authoritative URL inputs on its UIController.
+      // Fill only missing references so deliberate world-author assignments remain authoritative.
+      // If that proxy cannot be read, use only the two exact 1.5.18 hierarchy paths; never fall
+      // back to component order or a broad name search that could select our Queue URL Input.
+      if ((topInput == null || bottomInput == null) && controller != null)
+      {
+        VRCUrlInputField detectedTopInput;
+        VRCUrlInputField detectedBottomInput;
+        TryFindYamaPlayer1518UrlInputs(controller, queueInput, out detectedTopInput, out detectedBottomInput);
+
+        if (topInput == null && topProperty != null && detectedTopInput != null)
+        {
+          topProperty.objectReferenceValue = detectedTopInput;
+          topInput = detectedTopInput;
+        }
+        if (bottomInput == null && bottomProperty != null && detectedBottomInput != null)
+        {
+          bottomProperty.objectReferenceValue = detectedBottomInput;
+          bottomInput = detectedBottomInput;
+        }
+
+        if (topInput == null || bottomInput == null)
+        {
+          Debug.LogWarning("Yama Bili Danmaku: exact YamaPlayer 1.5.18 Top/Bottom UrlInput references were not both found. Existing manual assignments were preserved; assign any missing field in the helper Inspector.");
+        }
       }
 
       SerializedProperty labelProperty = serialized.FindProperty("_urlPrefixToggleButtonLabel");
@@ -1589,6 +1669,92 @@ namespace YamaBiliDanmakuV3.Editor
       AddPrefixInputEventTriggers(topInput, helper, "ApplyPrefixToTopInput");
       AddPrefixInputEventTriggers(bottomInput, helper, "ApplyPrefixToBottomInput");
       AddQueueInputEventTriggers(queueInput, helper);
+    }
+
+    private static bool TryFindYamaPlayer1518UrlInputs(
+      Controller controller,
+      VRCUrlInputField queueInput,
+      out VRCUrlInputField topInput,
+      out VRCUrlInputField bottomInput)
+    {
+      topInput = null;
+      bottomInput = null;
+      Transform playerRoot = FindYamaPlayer1518Root(controller);
+      if (playerRoot == null) return false;
+
+      Component[] components = playerRoot.GetComponentsInChildren<Component>(true);
+      for (int i = 0; i < components.Length; i++)
+      {
+        Component component = components[i];
+        if (component == null || component.GetType().FullName != YamaPlayer1518UiControllerTypeName) continue;
+
+        SerializedObject uiController = new SerializedObject(component);
+        SerializedProperty controllerProperty = uiController.FindProperty("_controller");
+        if (controllerProperty != null &&
+            controllerProperty.objectReferenceValue != null &&
+            controllerProperty.objectReferenceValue != controller)
+        {
+          continue;
+        }
+
+        SerializedProperty topProperty = uiController.FindProperty("_urlInputFieldTop");
+        SerializedProperty bottomProperty = uiController.FindProperty("_urlInputField");
+        VRCUrlInputField candidateTop = topProperty == null ? null : topProperty.objectReferenceValue as VRCUrlInputField;
+        VRCUrlInputField candidateBottom = bottomProperty == null ? null : bottomProperty.objectReferenceValue as VRCUrlInputField;
+        if (!IsYamaPlayer1518UrlInput(candidateTop, queueInput, playerRoot) ||
+            !IsYamaPlayer1518UrlInput(candidateBottom, queueInput, playerRoot) ||
+            candidateTop == candidateBottom)
+        {
+          continue;
+        }
+
+        topInput = candidateTop;
+        bottomInput = candidateBottom;
+        Debug.Log("Yama Bili Danmaku: wired YamaPlayer 1.5.18 Top/Bottom UrlInput from UIController serialized references.");
+        return true;
+      }
+
+      Transform topTransform = playerRoot.Find(YamaPlayer1518TopUrlInputPath);
+      Transform bottomTransform = playerRoot.Find(YamaPlayer1518BottomUrlInputPath);
+      VRCUrlInputField pathTop = topTransform == null ? null : topTransform.GetComponent<VRCUrlInputField>();
+      VRCUrlInputField pathBottom = bottomTransform == null ? null : bottomTransform.GetComponent<VRCUrlInputField>();
+      if (IsYamaPlayer1518UrlInput(pathTop, queueInput, playerRoot)) topInput = pathTop;
+      if (IsYamaPlayer1518UrlInput(pathBottom, queueInput, playerRoot) && pathBottom != topInput) bottomInput = pathBottom;
+
+      if (topInput != null || bottomInput != null)
+      {
+        Debug.Log("Yama Bili Danmaku: wired available YamaPlayer 1.5.18 UrlInput references from exact ScreenUI hierarchy paths.");
+      }
+      return topInput != null && bottomInput != null;
+    }
+
+    private static Transform FindYamaPlayer1518Root(Controller controller)
+    {
+      if (controller == null) return null;
+
+      Transform current = controller.transform;
+      while (current != null)
+      {
+        Transform internalRoot = current.Find(YamaPlayer1518InternalName);
+        Transform screenUi = current.Find(YamaPlayer1518ScreenUiName);
+        if (internalRoot != null &&
+            screenUi != null &&
+            (controller.transform == internalRoot || controller.transform.IsChildOf(internalRoot)))
+        {
+          return current;
+        }
+        current = current.parent;
+      }
+
+      return null;
+    }
+
+    private static bool IsYamaPlayer1518UrlInput(VRCUrlInputField candidate, VRCUrlInputField queueInput, Transform playerRoot)
+    {
+      return candidate != null &&
+             candidate != queueInput &&
+             playerRoot != null &&
+             candidate.transform.IsChildOf(playerRoot);
     }
 
     private static void AddQueueInputEventTriggers(VRCUrlInputField inputField, Component helper)

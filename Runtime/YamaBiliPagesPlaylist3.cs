@@ -2836,9 +2836,7 @@ namespace YamaBiliDanmakuV3
         label.text = (current ? "> " : "") + (sourceType == DisplaySourceManifest
           ? FormatBiliManifestLabel(sourceIndex)
           : FormatUnifiedTrackLabel(displayIndex, displayTrack));
-        label.color = current
-          ? new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f)
-          : new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+        SetPageButtonVisual(label, current);
       }
 
       if (itemCount <= 0)
@@ -3605,16 +3603,28 @@ namespace YamaBiliDanmakuV3
           Track queueTrack = GetStandaloneQueueTrack(queueIndex);
           _visibleDeleteUrls[i] = GetTrackVrcUrl(queueTrack);
           label.text = FormatStandaloneQueueTrackLabel(index, queueTrack);
-          label.color = new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+          SetPageButtonVisual(label, false);
           continue;
         }
 
         bool current = _selectedIndex == index;
         label.text = (current ? "> " : "") + FormatPageLabel(index);
-        label.color = current
-          ? new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f)
-          : new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+        SetPageButtonVisual(label, current);
       }
+    }
+
+    private void SetPageButtonVisual(TextMeshProUGUI label, bool current)
+    {
+      if (!Utilities.IsValid(label)) return;
+      label.color = new Color(1f, 1f, 1f, 1f);
+
+      Transform buttonTransform = label.transform.parent;
+      if (!Utilities.IsValid(buttonTransform)) return;
+      Image background = buttonTransform.GetComponent<Image>();
+      if (!Utilities.IsValid(background)) return;
+      background.color = current
+        ? new Color(1f, 1f, 1f, 0.14f)
+        : new Color(1f, 1f, 1f, 0.07f);
     }
 
     private int GetStandaloneQueueCount()

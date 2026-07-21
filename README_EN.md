@@ -10,7 +10,7 @@
 
 Example world: [https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-The current official stable YamaPlayer PC / desktop release is **1.10**, promoted from the verified `beta13.43` build and published on GitHub. This 1.10 Release **contains only the YamaPlayer PC / desktop adapter package**; the iwaSync3 and VizVid lines remain on their current public versions. For Android / Quest fixed screens or non-pickup players, continue using **1.03**; pickup tablets use the separate `YamaBiliDanmakuTabletV3` package, which is not included in the 1.10 Release.
+The current official stable YamaPlayer PC / desktop release is **1.11**, promoted unchanged from `alpha1.1` and published on GitHub. This 1.11 Release **contains only the YamaPlayer PC / desktop adapter**. The iwaSync3 and VizVid lines remain on their current public versions. Android / Quest fixed screens and non-pickup players continue using **1.03**, while pickup tablets use the separate `YamaBiliDanmakuTabletV3` package.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
@@ -18,7 +18,7 @@ The current official stable YamaPlayer PC / desktop release is **1.10**, promote
 
 If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, install the player required by the adapter you import:
 
-- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): required by `YamaBiliDanmakuV3` and `YamaBiliDanmakuTabletV3`.
+- [YamaPlayer](https://github.com/koorimizuw/YamaPlayer): required by `YamaBiliDanmakuV3` and `YamaBiliDanmakuTabletV3`; the PC adapter is pinned to upstream YamaPlayer 1.5.18 as its compatibility reference.
 - iwaSync3: required by `IwaBiliDanmakuV3`.
 - VizVid: required by `VizVidBiliDanmakuV3`.
 - TextMeshPro: TMP Essentials must be imported in the Unity project.
@@ -37,8 +37,8 @@ This public endpoint currently supports:
 - Bilibili video resolution, with matching Bilibili danmaku returned to this component.
 - Bilibili live stream resolution, without live danmaku for now.
 - NetEase Cloud Music song resolution.
-- NetEase Cloud Music playlist resolution. YamaPlayer 1.10 displays the playlist in-world and plays entries through backend `vcrid` URLs.
-- Bilibili multi-part videos, collections, and lists. YamaPlayer 1.10 displays titles, switches entries, and supports continuous playback.
+- NetEase Cloud Music playlist resolution. YamaPlayer 1.11 displays the playlist in-world and plays entries through backend `vcrid` URLs.
+- Bilibili multi-part videos, collections, and lists. YamaPlayer 1.11 displays titles, switches entries, and supports continuous playback.
 
 If you self-host this project's `server/` backend, replace the domain with your own domain to get the same resolver features.
 
@@ -55,7 +55,10 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 Current local and public package status:
 
-- `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`: official YamaPlayer PC / desktop source package and the only Unity adapter included in the 1.10 Release.
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`: current official YamaPlayer PC / desktop source package and GitHub v1.11 Release asset, promoted unchanged from `alpha1.1`. It includes precise YamaPlayer 1.5.18 Top/Bottom URL Input lookup and sets the danmaku/lyrics root Canvas Order to `-1`, preventing competition with YamaPlayer's Order `0` gray interaction UI.
+- `alpha1.1.zip`: byte-identical promotion source for the official 1.11 package, retained for traceability.
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`: previous black-gold official package.
+- `beta14.02.zip`: current black-gold test package. It preserves all beta14.01 black-gold visuals and URL Input lookup behavior, changing only the danmaku/lyrics root Canvas Order from `0` to `-1`.
 - `PaulKoiPlayer-IwaBiliDanmakuV3-1.04beta.zip`: iwaSync3 PC / desktop source package.
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`: VizVid PC / desktop source package.
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`: dedicated YamaPlayer Android / Quest pickup tablet package.
@@ -64,7 +67,7 @@ The server continues to use the v1.0.3 `server/` backend.
 
 ### Android / Quest note
 
-YamaPlayer 1.10 retains the verified PC / desktop external-display mounting behavior: selecting an object inside the player mounts the module under the player root, while selecting an external tablet or display surface uses the selected display Transform.
+YamaPlayer 1.11 retains the verified PC / desktop external-display mounting behavior: selecting an object inside the player mounts the module under the player root, while selecting an external tablet or display surface uses the selected display Transform.
 
 For Android / Quest fixed screens, normal large screens, or non-pickup players, continue using 1.03. Only Android / Quest pickup tablets should import the separate `YamaBiliDanmakuTabletV3` package. It uses its own namespace, class names, shaders, and menu items. After generating the tablet module, manually drag the playback YamaPlayer `Controller` into the Inspector as the data source.
 
@@ -81,7 +84,7 @@ That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup t
 - Updates only active danmaku entries to reduce per-frame work
 - Optional custom parser prefix for player URL input fields
 - Public enable, disable, and toggle events for custom world UI
-- YamaPlayer 1.10 supports Bilibili multi-part videos/collections/lists and NetEase Cloud Music playlists, with up to six entries per page
+- YamaPlayer 1.11 supports Bilibili multi-part videos/collections/lists and NetEase Cloud Music playlists, with up to six entries per page
 - Sequential playback and single-entry looping with Home, Previous, and Next controls; NetEase playlists wrap as a complete playlist, while Bilibili multi-part playback continues into the following queue or stops after its final part
 - Lightweight manual Udon synchronization for multiplayer selection state and late-join list recovery
 
@@ -102,7 +105,7 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## Installation
 
-1. Use the local `1.10.zip` package for YamaPlayer on PC / desktop. iwaSync3 and VizVid remain on their current versions.
+1. Use the local `1.11.zip` package for YamaPlayer on PC / desktop. iwaSync3 and VizVid remain on their current versions.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
@@ -115,16 +118,16 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ![Create the danmaku module from the YamaPlayer context menu](docs/images/install-yamaplayer-menu.png)
 
-## Manually assign the URL inputs
+## URL input binding
 
-The two URL fields used by the prefix helper must be assigned **manually** in the Inspector. Do not rely on automatic lookup or component-order guessing. The hierarchy may differ between YamaPlayer releases and customized prefabs.
+The official 1.11 package and black-gold `beta14.02` fill empty URL fields in the prefix helper for an unmodified YamaPlayer 1.5.18 instance from its authoritative `UIController` references or the exact paths below, without overwriting existing manual references. Customized or renamed prefabs still require manual assignment; no version should guess by component order or broad object-name search.
 
 | Inspector field | Default YamaPlayer object path |
 | --- | --- |
 | `Top Url Input Field` | `ScreenUI/Canvas/Control/Main/Top/UrlInput` |
 | `Bottom Url Input Field` | `ScreenUI/Canvas/Control/Main/LeftSide/Container/UrlInput` |
 
-Drag the `VRC URL Input Field` component from each object into the corresponding field.
+For manual fallback, drag the `VRC URL Input Field` component from each object into the corresponding field.
 
 ![Manually assign the two YamaPlayer URL input fields](docs/images/url-prefix-helper-bindings.png)
 
@@ -152,7 +155,7 @@ The same endpoint returns video resolution data to the video player and danmaku 
 
 ## Common settings
 
-> **These settings are configured in the Unity Editor only.** YamaPlayer 1.10 generates lightweight player controls and the playlist panel. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
+> **These settings are configured in the Unity Editor only.** YamaPlayer 1.11 generates lightweight player controls and the playlist panel. Font size, opacity, weight, outline, lane count, scroll speed, and timing offset still need to be configured by the world author in the Unity Inspector and saved before uploading the world.
 
 | Setting | Default | Description |
 | --- | ---: | --- |
@@ -190,11 +193,11 @@ Changing the Inspector values without running the Apply command does not update 
 
 ## In-world danmaku controls
 
-YamaPlayer 1.10 generates a lightweight Chinese control interface under `Bili Danmaku Module`:
+YamaPlayer 1.11 generates a lightweight Chinese control interface under `Bili Danmaku Module`:
 
 - `弹幕范围：全屏 / 半屏 / 1/4屏`: cycles the danmaku display area.
 - `弹幕：开启 / 关闭`: toggles danmaku visibility.
-- `视频链接`: opens the component's integrated queue input and adds a URL through the preconfigured parser prefix. The original YamaPlayer Top/Bottom URL inputs remain manually assignable when needed.
+- `输入链接`: opens the component's integrated queue input and adds a URL through the preconfigured parser prefix. The official 1.11 package and beta14.02 precisely fill missing YamaPlayer Top/Bottom URL Input references for an unmodified 1.5.18 layout while retaining manual fallback for customized layouts.
 - `播放列表`: shows Bilibili multi-part/list entries or NetEase playlist tracks and switches between sequential and single-entry looping.
 
 Switching the display area does not clear danmaku already on screen. Only newly emitted danmaku uses the new area.
@@ -232,6 +235,14 @@ If it still fails, manually create a U# Script in `Assets/YamaBiliDanmakuV3/Runt
 - Do not mix components or U# Program Assets from older releases.
 
 ## Current release
+
+YamaPlayer 1.11 is promoted unchanged from `alpha1.1` and adds the following on top of the 1.10 playback logic:
+
+- A pure-black and translucent-black UI with white outlines and pure-white text.
+- One shared rounded dark background for the three top controls. The third control is renamed to `输入链接` and uses the same TMP font, icon, and layout styling as the first two controls.
+- Pure-white playlist text, with the current `> ` item distinguished by row-background alpha `0.14` versus `0.07` for normal rows.
+- Empty Top/Bottom URL Input references are filled for an unmodified YamaPlayer 1.5.18 instance from authoritative `UIController` serialized fields or two verified exact paths. Existing manual assignments take priority, and customized layouts retain manual fallback.
+- Root Canvas `sortingOrder` changes from 1.10's `20` to `-1` for danmaku and NetEase lyrics, allowing YamaPlayer's Order `0` gray interaction UI to cover danmaku reliably after a click without changing the TMP shader.
 
 Compared with 1.04beta, YamaPlayer 1.10 adds:
 
@@ -277,7 +288,7 @@ v1.0.0 is the first unified release containing both the Unity component and its 
 ## Acknowledgements and related links
 
 - [danmaku.paulkoishi.com](https://danmaku.paulkoishi.com/): current public parser service status page. If it cannot be reached, the public service is unavailable.
-- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): the VRChat video player integrated and tested by YamaPlayer 1.10.
+- [koorimizuw/YamaPlayer](https://github.com/koorimizuw/YamaPlayer): this project's PC adapter is pinned to upstream YamaPlayer 1.5.18; the current component release is 1.11.
 - [music.znnu.com](https://music.znnu.com/): the third-party service used by the server for NetEase Cloud Music resolution.
 - [yionchi](https://github.com/yionchi): author of the related `music.znnu.com` service.
 
