@@ -25,8 +25,10 @@ const ZNNU_SIGNATURE_SECRET = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142
 const NETEASE_DEFAULT_LEVEL = normalizeNeteaseLevel(process.env.NETEASE_LEVEL || "standard");
 const NETEASE_PLAYLIST_CACHE_TTL_MS = intEnv("NETEASE_PLAYLIST_CACHE_TTL_SECONDS", 1800) * 1000;
 const NETEASE_URL_CACHE_TTL_MS = intEnv("NETEASE_URL_CACHE_TTL_SECONDS", 600) * 1000;
+const NETEASE_LYRICS_CACHE_TTL_MS = intEnv("NETEASE_LYRICS_CACHE_TTL_SECONDS", 86400) * 1000;
 const NETEASE_PLAYLIST_CACHE_MAX_ENTRIES = intEnv("NETEASE_PLAYLIST_CACHE_MAX_ENTRIES", 100);
 const NETEASE_URL_CACHE_MAX_ENTRIES = intEnv("NETEASE_URL_CACHE_MAX_ENTRIES", 500);
+const NETEASE_LYRICS_CACHE_MAX_ENTRIES = intEnv("NETEASE_LYRICS_CACHE_MAX_ENTRIES", 500);
 const ZNNU_FETCH_TIMEOUT_MS = intEnv("ZNNU_FETCH_TIMEOUT_SECONDS", 30) * 1000;
 const BILI_FETCH_TIMEOUT_MS = intEnv("BILI_FETCH_TIMEOUT_SECONDS", 12) * 1000;
 const RATE_LIMIT_WINDOW_MS = intEnv("RATE_LIMIT_WINDOW_SECONDS", 60) * 1000;
@@ -36,9 +38,20 @@ const RATE_LIMIT_HOME = intEnv("RATE_LIMIT_HOME_PER_WINDOW", 60);
 const RATE_LIMIT_PLAYER = intEnv("RATE_LIMIT_PLAYER_PER_WINDOW", 120);
 const RATE_LIMIT_API_DANMAKU = intEnv("RATE_LIMIT_API_DANMAKU_PER_WINDOW", 80);
 const RATE_LIMIT_API_RESOLVE = intEnv("RATE_LIMIT_API_RESOLVE_PER_WINDOW", 60);
+const RATE_LIMIT_API_PAGES = intEnv("RATE_LIMIT_API_PAGES_PER_WINDOW", 60);
+const RATE_LIMIT_API_LYRICS = intEnv("RATE_LIMIT_API_LYRICS_PER_WINDOW", 80);
 const RATE_LIMIT_CACHE_STATS = intEnv("RATE_LIMIT_CACHE_STATS_PER_WINDOW", 20);
 const FAILURE_CACHE_TTL_MS = intEnv("FAILURE_CACHE_TTL_SECONDS", 180) * 1000;
 const FAILURE_CACHE_MAX_ENTRIES = intEnv("FAILURE_CACHE_MAX_ENTRIES", 500);
+const VCRID_MIN = 1;
+const VCRID_MAX = intEnv("VCRID_MAX", 1000000);
+const VCRID_STORE_FILE = process.env.VCRID_STORE_FILE || "/app/data/vcrid-store.json";
+const VCRID_GC_ENABLED = String(process.env.VCRID_GC_ENABLED || "true").toLowerCase() !== "false";
+const VCRID_GC_USAGE_THRESHOLD = numberEnv("VCRID_GC_USAGE_THRESHOLD", 0.8);
+const VCRID_GC_TARGET_USAGE = numberEnv("VCRID_GC_TARGET_USAGE", 0.7);
+const VCRID_GC_MIN_UNUSED_DAYS = intEnv("VCRID_GC_MIN_UNUSED_DAYS", 90);
+const HISTORY_STORE_FILE = process.env.HISTORY_STORE_FILE || "/app/data/history-store.json";
+const DASHBOARD_HISTORY_PAGE_SIZE = intEnv("DASHBOARD_HISTORY_PAGE_SIZE", 20);
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
 const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || process.env.TZ || "Asia/Shanghai";
@@ -50,9 +63,13 @@ const videoUrlCache = new Map();
 const danmakuCache = new Map();
 const neteasePlaylistCache = new Map();
 const neteaseUrlCache = new Map();
+const neteaseLyricsCache = new Map();
+const bilibiliListCache = new Map();
 const failureCache = new Map();
 const rateLimitBuckets = new Map();
 const inflight = new Map();
+let vcrIdStore = null;
+let historyStore = null;
 let znnuKeySession = null;
 let znnuIp = null;
 
@@ -76,6 +93,14 @@ const stats = {
   playerDanmakuRequests: 0,
   apiDanmakuRequests: 0,
   resolveRequests: 0,
+  apiPagesRequests: 0,
+  apiLyricsRequests: 0,
+  bilibiliPagesManifestRequests: 0,
+  bilibiliListManifestRequests: 0,
+  neteasePlaylistManifestRequests: 0,
+  neteaseSongManifestRequests: 0,
+  vcridGcRuns: 0,
+  vcridGcDeleted: 0,
   unsupportedUrlRejected: 0,
   legacyRejected: 0,
   errors: 0,
@@ -126,7 +151,8 @@ const server = http.createServer(async (req, res) => {
     markStatsDirty();
 
     if (requestUrl.pathname === "/") {
-      sendHtml(res, 200, renderDashboard(), noStoreHeaders());
+      await backfillDashboardBilibiliTitles();
+      sendHtml(res, 200, renderDashboard(requestUrl), noStoreHeaders());
       return;
     }
 
@@ -145,6 +171,16 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname === "/api/cache/stats") {
       sendJson(res, 200, buildCacheStats(), noStoreHeaders());
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/pages") {
+      await handlePages(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/lyrics") {
+      await handleLyrics(res, requestUrl);
       return;
     }
 
@@ -184,6 +220,16 @@ server.listen(PORT, () => {
 
 async function handlePlayer(req, res, requestUrl) {
   stats.playerRequests++;
+  const vcridResult = parseVcridParam(requestUrl);
+  if (vcridResult.present) {
+    if (!vcridResult.ok) {
+      sendText(res, 400, "#YBDM/1\n#error=invalid_vcrid\n", noStoreHeaders());
+      return;
+    }
+    await handleVcridPlayer(req, res, requestUrl, vcridResult.vcrid);
+    return;
+  }
+
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) {
     sendText(res, 400, "missing url\n");
@@ -209,6 +255,14 @@ async function handlePlayer(req, res, requestUrl) {
     });
     stats.playerRedirects++;
     stats.liveRedirects++;
+    recordHistory({
+      provider: "bilibili",
+      contentType: "live",
+      roomId: resolved.realRoomId || liveInput.roomId,
+      title: `B站直播 ${resolved.realRoomId || liveInput.roomId}`,
+      sourceUrl: source,
+      normalizedUrl: liveInput.normalizedUrl || source
+    }, "player_redirect");
     res.writeHead(302, {
       "Location": resolved.videoUrl,
       ...noStoreHeaders()
@@ -221,6 +275,47 @@ async function handlePlayer(req, res, requestUrl) {
     const neteaseInput = await parseNeteaseInput(source, forcedPage);
     if (neteaseInput) {
       const level = normalizeNeteaseLevel(requestUrl.searchParams.get("level") || requestUrl.searchParams.get("quality") || NETEASE_DEFAULT_LEVEL);
+      const danmakuMode = isDanmakuRequest(req, requestUrl);
+      if (danmakuMode) {
+        logPlayerRequest(req, requestUrl, {
+          mode: "netease-manifest",
+          provider: "netease",
+          neteaseType: neteaseInput.type,
+          playlistId: neteaseInput.playlistId || "",
+          songId: neteaseInput.songId || "",
+          requestedPage: neteaseInput.page,
+          level
+        });
+        stats.playerDanmakuRequests++;
+        const origin = getRequestOrigin(req, requestUrl);
+        if (neteaseInput.type === "playlist") {
+          const playlist = await getNeteasePlaylist(neteaseInput);
+          stats.neteasePlaylistManifestRequests++;
+          markStatsDirty();
+          const payload = buildNeteasePlaylistResponse({
+            source,
+            input: { ...neteaseInput, level },
+            playlist,
+            origin,
+            selectedIndex: forcedPage || neteaseInput.page || 1
+          });
+          recordNeteasePlaylistHistory(payload, "player_manifest");
+          sendJson(res, 200, payload, noStoreHeaders());
+          return;
+        }
+
+        stats.neteaseSongManifestRequests++;
+        markStatsDirty();
+        const payload = buildNeteaseSongResponse({
+          source,
+          input: { ...neteaseInput, level },
+          origin
+        });
+        recordNeteaseSongHistory(payload, "player_manifest");
+        sendJson(res, 200, payload, noStoreHeaders());
+        return;
+      }
+
       const resolved = await resolveNeteaseUrl({ ...neteaseInput, level });
       logPlayerRequest(req, requestUrl, {
         mode: "netease-redirect",
@@ -235,6 +330,31 @@ async function handlePlayer(req, res, requestUrl) {
       stats.neteaseRedirects++;
       if (neteaseInput.type === "playlist") stats.neteasePlaylistRedirects++;
       if (neteaseInput.type === "song") stats.neteaseSongRedirects++;
+      if (neteaseInput.type === "playlist") {
+        recordHistory({
+          provider: "netease",
+          contentType: "playlist",
+          playlistId: neteaseInput.playlistId,
+          title: resolved.playlistName || neteaseInput.playlistId,
+          sourceUrl: source,
+          normalizedUrl: neteaseInput.normalizedUrl,
+          pagesCount: resolved.totalTracks || 0,
+          level
+        }, "player_redirect");
+      }
+      recordHistory({
+        provider: "netease",
+        contentType: "song",
+        songId: resolved.songId || neteaseInput.songId,
+        playlistId: neteaseInput.playlistId,
+        title: resolved.name || "",
+        name: resolved.name || "",
+        artist: resolved.artist || "",
+        album: resolved.album || "",
+        sourceUrl: source,
+        normalizedUrl: neteaseInput.normalizedUrl,
+        level: resolved.level || level
+      }, "player_redirect");
       res.writeHead(302, {
         "Location": resolved.audioUrl,
         ...noStoreHeaders()
@@ -265,6 +385,7 @@ async function handlePlayer(req, res, requestUrl) {
     stats.playerDanmakuRequests++;
     const tsv = await getDanmakuTsv(input);
     stats.emittedDanmakuRows += getDanmakuCount(tsv);
+    recordBilibiliHistoryFromTsv(tsv, source, input.normalizedUrl, "player_danmaku");
     sendText(res, 200, tsv, danmakuCacheHeaders());
     return;
   }
@@ -276,6 +397,20 @@ async function handlePlayer(req, res, requestUrl) {
   }
 
   stats.playerRedirects++;
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    sourceUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    bvid: resolved.bvid,
+    aid: resolved.aid,
+    cid: resolved.cid,
+    page: resolved.page,
+    title: resolved.title,
+    part: resolved.part,
+    duration: resolved.duration,
+    pagesCount: resolved.pagesCount || 0
+  }, "player_redirect");
   res.writeHead(302, {
     "Location": resolved.videoUrl,
     ...noStoreHeaders()
@@ -285,6 +420,16 @@ async function handlePlayer(req, res, requestUrl) {
 
 async function handleResolve(res, requestUrl) {
   stats.resolveRequests++;
+  const vcridResult = parseVcridParam(requestUrl);
+  if (vcridResult.present) {
+    if (!vcridResult.ok) {
+      sendJson(res, 400, { error: "invalid_vcrid" }, noStoreHeaders());
+      return;
+    }
+    await handleVcridResolve(res, vcridResult.vcrid);
+    return;
+  }
+
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) {
     sendJson(res, 400, { error: "missing url" }, noStoreHeaders());
@@ -306,6 +451,55 @@ async function handleResolve(res, requestUrl) {
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = await parseInputUrl(source, forcedPage);
   if (!input.bvid && !input.aid) {
+    const neteaseInput = await parseNeteaseInput(source, forcedPage);
+    if (neteaseInput) {
+      const level = normalizeNeteaseLevel(requestUrl.searchParams.get("level") || requestUrl.searchParams.get("quality") || NETEASE_DEFAULT_LEVEL);
+      const resolved = await resolveNeteaseUrl({ ...neteaseInput, level });
+      if (neteaseInput.type === "playlist") {
+        recordHistory({
+          provider: "netease",
+          contentType: "playlist",
+          playlistId: neteaseInput.playlistId,
+          title: resolved.playlistName || neteaseInput.playlistId,
+          sourceUrl: source,
+          normalizedUrl: neteaseInput.normalizedUrl,
+          pagesCount: resolved.totalTracks || 0,
+          level
+        }, "api_resolve");
+      }
+      recordHistory({
+        provider: "netease",
+        contentType: "song",
+        songId: resolved.songId || neteaseInput.songId,
+        playlistId: neteaseInput.playlistId,
+        title: resolved.name || "",
+        name: resolved.name || "",
+        artist: resolved.artist || "",
+        album: resolved.album || "",
+        sourceUrl: source,
+        normalizedUrl: neteaseInput.normalizedUrl,
+        level: resolved.level || level
+      }, "api_resolve");
+      sendJson(res, 200, {
+        type: "netease",
+        provider: "netease",
+        inputUrl: source,
+        normalizedUrl: neteaseInput.normalizedUrl,
+        neteaseType: neteaseInput.type,
+        playlistId: resolved.playlistId || neteaseInput.playlistId || "",
+        playlistName: resolved.playlistName || "",
+        songId: resolved.songId,
+        selectedPage: resolved.selectedPage || neteaseInput.page || 1,
+        totalTracks: resolved.totalTracks || 1,
+        name: resolved.name || "",
+        artist: resolved.artist || "",
+        album: resolved.album || "",
+        level: resolved.level || level,
+        audioUrlPreview: resolved.audioUrl ? `${resolved.audioUrl.slice(0, 120)}...` : ""
+      }, noStoreHeaders());
+      return;
+    }
+
     sendJson(res, 400, { error: "missing bvid or aid", inputUrl: source }, noStoreHeaders());
     return;
   }
@@ -314,6 +508,20 @@ async function handleResolve(res, requestUrl) {
   const view = viewResult.value;
   const selected = selectVideoPage(view, input);
   const video = await resolveVideoUrl({ ...input, cid: selected.cid });
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    sourceUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    bvid: view.bvid || input.bvid || "",
+    aid: view.aid || input.aid || 0,
+    cid: selected.cid,
+    page: selected.page,
+    title: view.title || "",
+    part: selected.part || "",
+    duration: selected.duration || 0,
+    pagesCount: Array.isArray(view.pages) ? view.pages.length : 0
+  }, "api_resolve");
 
   sendJson(res, 200, {
     inputUrl: source,
@@ -335,8 +543,358 @@ async function handleResolve(res, requestUrl) {
   }, noStoreHeaders());
 }
 
+async function handleVcridPlayer(req, res, requestUrl, vcrid) {
+  const record = vcrIdStore.get(vcrid);
+  if (!record) {
+    sendText(res, 404, "#YBDM/1\n#error=vcrid_not_found\n", noStoreHeaders());
+    return;
+  }
+
+  const danmakuMode = isDanmakuRequest(req, requestUrl);
+  if (record.provider === "netease") {
+    if (danmakuMode) {
+      stats.playerDanmakuRequests++;
+      const tsv = await buildNeteaseDanmakuTsv(record);
+      stats.emittedDanmakuRows += getDanmakuCount(tsv);
+      recordHistoryFromVcrRecord(record, "vcrid_danmaku");
+      sendText(res, 200, tsv, danmakuCacheHeaders());
+      return;
+    }
+
+    const resolved = await resolveNeteaseRecord(record, { played: true });
+    recordHistoryFromVcrRecord({ ...record, name: resolved.name || record.name, artist: resolved.artist || record.artist, album: resolved.album || record.album }, "vcrid_player");
+    stats.playerRedirects++;
+    stats.neteaseRedirects++;
+    stats.neteaseSongRedirects++;
+    res.writeHead(302, { "Location": resolved.audioUrl, ...noStoreHeaders() });
+    res.end();
+    return;
+  }
+
+  const input = await inputFromVcrRecord(record);
+  if (danmakuMode) {
+    stats.playerDanmakuRequests++;
+    const tsv = await getDanmakuTsv(input, { vcrid, manifestKey: record.manifestKey || "" });
+    stats.emittedDanmakuRows += getDanmakuCount(tsv);
+    recordBilibiliHistoryFromTsv(tsv, record.normalizedUrl || "", input.normalizedUrl, "vcrid_danmaku");
+    sendText(res, 200, tsv, danmakuCacheHeaders());
+    return;
+  }
+
+  const resolved = await resolveVideoUrl(input);
+  vcrIdStore.updateRecord(vcrid, {
+    title: resolved.title || record.title || "",
+    part: resolved.part || record.part || "",
+    lastAccessAt: Date.now()
+  });
+  vcrIdStore.touch(vcrid, { played: true });
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    bvid: resolved.bvid,
+    aid: resolved.aid,
+    cid: resolved.cid,
+    page: resolved.page,
+    title: resolved.title,
+    part: resolved.part,
+    vcrid
+  }, "vcrid_player");
+  stats.playerRedirects++;
+  res.writeHead(302, { "Location": resolved.videoUrl, ...noStoreHeaders() });
+  res.end();
+}
+
+async function handleVcridResolve(res, vcrid) {
+  const record = vcrIdStore.get(vcrid);
+  if (!record) {
+    sendJson(res, 404, { error: "vcrid_not_found", vcrid }, noStoreHeaders());
+    return;
+  }
+
+  if (record.provider === "netease") {
+    const resolved = await resolveNeteaseRecord(record);
+    recordHistoryFromVcrRecord(record, "vcrid_resolve");
+    sendJson(res, 200, {
+      type: "netease-vcrid",
+      provider: "netease",
+      vcrid,
+      songId: resolved.songId,
+      playlistId: record.playlistId || "",
+      page: record.page || 1,
+      name: resolved.name || record.name || "",
+      artist: resolved.artist || record.artist || "",
+      album: resolved.album || record.album || "",
+      level: resolved.level || record.level || NETEASE_DEFAULT_LEVEL,
+      audioUrlPreview: resolved.audioUrl ? `${resolved.audioUrl.slice(0, 120)}...` : ""
+    }, noStoreHeaders());
+    return;
+  }
+
+  const input = await inputFromVcrRecord(record);
+  const resolved = await resolveVideoUrl(input);
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    bvid: resolved.bvid,
+    aid: resolved.aid,
+    cid: resolved.cid,
+    page: resolved.page,
+    title: resolved.title,
+    part: resolved.part,
+    vcrid
+  }, "vcrid_resolve");
+  sendJson(res, 200, {
+    type: "bilibili-vcrid",
+    vcrid,
+    bvid: resolved.bvid,
+    aid: resolved.aid,
+    cid: resolved.cid,
+    page: resolved.page,
+    title: resolved.title,
+    part: resolved.part,
+    videoUrlPreview: resolved.videoUrl ? `${resolved.videoUrl.slice(0, 120)}...` : ""
+  }, noStoreHeaders());
+}
+
+async function handleVcridDanmaku(res, vcrid) {
+  const record = vcrIdStore.get(vcrid);
+  if (!record) {
+    sendText(res, 404, "#YBDM/1\n#error=vcrid_not_found\n", noStoreHeaders());
+    return;
+  }
+
+  if (record.provider === "netease") {
+    const tsv = await buildNeteaseDanmakuTsv(record);
+    stats.emittedDanmakuRows += getDanmakuCount(tsv);
+    recordHistoryFromVcrRecord(record, "vcrid_danmaku");
+    sendText(res, 200, tsv, danmakuCacheHeaders());
+    return;
+  }
+
+  const input = await inputFromVcrRecord(record);
+  const tsv = await getDanmakuTsv(input, { vcrid, manifestKey: record.manifestKey || "" });
+  stats.emittedDanmakuRows += getDanmakuCount(tsv);
+  recordBilibiliHistoryFromTsv(tsv, record.normalizedUrl || "", input.normalizedUrl, "vcrid_danmaku");
+  sendText(res, 200, tsv, danmakuCacheHeaders());
+}
+
+async function handleLyrics(res, requestUrl) {
+  stats.apiLyricsRequests++;
+  markStatsDirty();
+  const target = await resolveLyricsTarget(requestUrl);
+  if (target.error) {
+    sendJson(res, target.status || 400, { error: target.error }, noStoreHeaders());
+    return;
+  }
+
+  const lyrics = await getNeteaseLyrics(target.songId);
+  sendJson(res, 200, {
+    type: "netease-lyrics",
+    provider: "netease",
+    vcrid: target.vcrid || 0,
+    songId: target.songId,
+    name: lyrics.name || target.name || "",
+    artist: lyrics.artist || target.artist || "",
+    album: lyrics.album || target.album || "",
+    coverUrl: lyrics.coverUrl || "",
+    lyric: lyrics.lyric || "",
+    translatedLyric: lyrics.translatedLyric || "",
+    lines: lyrics.lines || [],
+    nolyric: Boolean(lyrics.nolyric),
+    uncollected: Boolean(lyrics.uncollected)
+  }, {
+    "Cache-Control": `public, max-age=${Math.floor(NETEASE_LYRICS_CACHE_TTL_MS / 1000)}`,
+    "Access-Control-Allow-Origin": "*"
+  });
+}
+
+async function handlePages(req, res, requestUrl) {
+  stats.apiPagesRequests++;
+  const source = requestUrl.searchParams.get("url") || "";
+  if (!source) {
+    sendJson(res, 400, { error: "missing url" }, noStoreHeaders());
+    return;
+  }
+
+  const whitelist = validateInputSource(source);
+  if (!whitelist.allowed) {
+    stats.unsupportedUrlRejected++;
+    markStatsDirty();
+    sendJson(res, 400, {
+      error: whitelist.error,
+      host: whitelist.host,
+      path: whitelist.path,
+      inputUrl: source
+    }, noStoreHeaders());
+    return;
+  }
+
+  const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
+  const input = await parseInputUrl(source, forcedPage);
+  const cid = normalizeAid(requestUrl.searchParams.get("cid") || "");
+  if (cid) input.cid = cid;
+
+  if (!input.bvid && !input.aid) {
+    const listInput = parseBilibiliListInput(source);
+    if (listInput) {
+      try {
+        const list = await getBilibiliList(listInput);
+        const origin = getRequestOrigin(req, requestUrl);
+        stats.bilibiliListManifestRequests++;
+        markStatsDirty();
+        const payload = buildBilibiliListResponse({
+          source,
+          input: listInput,
+          list,
+          origin,
+          selectedIndex: forcedPage || 1
+        });
+        recordHistory({
+          provider: "bilibili",
+          contentType: "list",
+          sourceUrl: source,
+          normalizedUrl: listInput.normalizedUrl,
+          listId: firstNonEmpty(listInput.mediaId, listInput.sid, listInput.mid, listInput.normalizedUrl),
+          title: payload.title || "",
+          pagesCount: payload.totalPages || 0
+        }, "api_pages");
+        sendJson(res, 200, payload, noStoreHeaders());
+      } catch (error) {
+        sendJson(res, 502, {
+          error: error.message || String(error),
+          inputUrl: source,
+          listType: listInput.type
+        }, noStoreHeaders());
+      }
+      return;
+    }
+
+    const neteaseInput = await parseNeteaseInput(source, forcedPage);
+    if (neteaseInput) {
+      try {
+        const level = normalizeNeteaseLevel(requestUrl.searchParams.get("level") || requestUrl.searchParams.get("quality") || NETEASE_DEFAULT_LEVEL);
+        const origin = getRequestOrigin(req, requestUrl);
+        if (neteaseInput.type === "playlist") {
+          const playlist = await getNeteasePlaylist(neteaseInput);
+          stats.neteasePlaylistManifestRequests++;
+          markStatsDirty();
+          const payload = buildNeteasePlaylistResponse({
+            source,
+            input: { ...neteaseInput, level },
+            playlist,
+            origin,
+            selectedIndex: forcedPage || 1
+          });
+          recordNeteasePlaylistHistory(payload, "api_pages");
+          sendJson(res, 200, payload, noStoreHeaders());
+          return;
+        }
+
+        stats.neteaseSongManifestRequests++;
+        markStatsDirty();
+        const payload = buildNeteaseSongResponse({
+          source,
+          input: { ...neteaseInput, level },
+          origin
+        });
+        recordNeteaseSongHistory(payload, "api_pages");
+        sendJson(res, 200, payload, noStoreHeaders());
+      } catch (error) {
+        sendJson(res, 502, {
+          error: error.message || String(error),
+          inputUrl: source,
+          provider: "netease"
+        }, noStoreHeaders());
+      }
+      return;
+    }
+
+    sendJson(res, 400, { error: "missing bvid or aid", inputUrl: source }, noStoreHeaders());
+    return;
+  }
+
+  const viewResult = await getVideoView(input);
+  const view = viewResult.value;
+  const pages = Array.isArray(view.pages) ? view.pages : [];
+  if (pages.length === 0) {
+    sendJson(res, 400, { error: "no pages", inputUrl: source }, noStoreHeaders());
+    return;
+  }
+
+  const selected = selectVideoPage(view, input);
+  const origin = getRequestOrigin(req, requestUrl);
+  const vcrRecords = registerVideoViewPages(view, input);
+  const pageItems = pages.map((pageItem, index) => {
+    const pageNumber = Number(pageItem.page || index + 1);
+    const pageVcrid = vcrRecords.get(Number(pageItem.cid))?.vcrid || 0;
+    const urls = buildPlaybackUrls({
+      origin,
+      vcrid: pageVcrid,
+      sourceUrl: input.normalizedUrl || source,
+      page: pageNumber
+    });
+    return {
+      page: pageNumber,
+      cid: Number(pageItem.cid || 0),
+      part: pageItem.part || "",
+      duration: Number(pageItem.duration || 0),
+      vcrid: pageVcrid,
+      playUrl: urls.playUrl,
+      danmakuUrl: urls.danmakuUrl,
+      resolveUrl: urls.resolveUrl
+    };
+  });
+
+  const payload = {
+    type: "bilibili-pages",
+    inputUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    bvid: view.bvid || input.bvid || "",
+    aid: view.aid || input.aid || 0,
+    title: view.title || "",
+    selectedPage: selected.page,
+    selectedCid: selected.cid,
+    selectedVcrid: vcrRecords.get(Number(selected.cid))?.vcrid || 0,
+    totalPages: pages.length,
+    pages: pageItems,
+    cacheHit: {
+      view: viewResult.cacheHit
+    }
+  };
+  stats.bilibiliPagesManifestRequests++;
+  markStatsDirty();
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    sourceUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    bvid: payload.bvid,
+    aid: payload.aid,
+    cid: payload.selectedCid,
+    page: payload.selectedPage,
+    title: payload.title,
+    pagesCount: payload.totalPages,
+    vcrid: payload.selectedVcrid
+  }, "api_pages");
+  if (vcrRecords.unavailable) {
+    payload.warning = "vcrid_store_unavailable";
+    payload.vcridStoreError = vcrRecords.unavailable;
+  }
+  sendJson(res, 200, payload, noStoreHeaders());
+}
+
 async function handleApiDanmaku(res, requestUrl) {
   stats.apiDanmakuRequests++;
+  const vcridResult = parseVcridParam(requestUrl);
+  if (vcridResult.present) {
+    if (!vcridResult.ok) {
+      sendText(res, 400, "#YBDM/1\n#error=invalid_vcrid\n", noStoreHeaders());
+      return;
+    }
+    await handleVcridDanmaku(res, vcridResult.vcrid);
+    return;
+  }
+
   const source = requestUrl.searchParams.get("url") || "";
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   if (source) {
@@ -366,6 +924,7 @@ async function handleApiDanmaku(res, requestUrl) {
 
   const tsv = await getDanmakuTsv(input);
   stats.emittedDanmakuRows += getDanmakuCount(tsv);
+  recordBilibiliHistoryFromTsv(tsv, source, input.normalizedUrl, "api_danmaku");
   sendText(res, 200, tsv, danmakuCacheHeaders());
 }
 
@@ -392,6 +951,582 @@ function mergeNumericFields(target, source) {
     if (key === "startedAt") continue;
     const value = Number(source[key]);
     if (Number.isFinite(value) && value >= 0) target[key] = value;
+  }
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function historyKey(input = {}) {
+  const provider = String(input.provider || "").trim();
+  const contentType = String(input.contentType || "").trim();
+  if (provider === "bilibili") {
+    const bvid = normalizeBvid(input.bvid || "");
+    if (bvid) return `bilibili:video:${bvid}`;
+    const aid = normalizeAid(input.aid || "");
+    if (aid) return `bilibili:video:av${aid}`;
+    const roomId = normalizeAid(input.roomId || "");
+    if (roomId) return `bilibili:live:${roomId}`;
+    if (contentType === "list") {
+      const listId = firstNonEmpty(input.listId, input.mediaId, input.sid, input.normalizedUrl, input.sourceUrl);
+      if (listId) return `bilibili:list:${safeCacheFileName(listId)}`;
+    }
+  }
+  if (provider === "netease") {
+    const playlistId = normalizeNumericId(input.playlistId || "");
+    if (contentType === "playlist" && playlistId) return `netease:playlist:${playlistId}`;
+    const songId = normalizeNumericId(input.songId || "");
+    if (songId) return `netease:song:${songId}`;
+  }
+  return "";
+}
+
+function recordHistory(input, event = "seen", options = {}) {
+  try {
+    return historyStore?.upsert(input, event, options);
+  } catch (error) {
+    console.warn(`[history] record failed: ${error.message || error}`);
+    return null;
+  }
+}
+
+function seedHistoryFromExistingStores() {
+  if (!historyStore?.available || !vcrIdStore?.available) return;
+  let changed = false;
+  for (const record of Object.values(vcrIdStore.data.records || {})) {
+    if (!record || !record.provider) continue;
+    if (record.provider === "bilibili") {
+      const payload = {
+        provider: "bilibili",
+        contentType: "video",
+        bvid: record.bvid,
+        aid: record.aid,
+        cid: record.cid,
+        page: record.page,
+        title: record.title,
+        part: record.part,
+        duration: record.duration,
+        vcrid: record.vcrid
+      };
+      if (!historyStore.data.records[historyKey(payload)]) {
+        recordHistory(payload, "imported", { deferSave: true });
+        changed = true;
+      }
+      continue;
+    }
+    if (record.provider === "netease") {
+      if (record.playlistId) {
+        const playlistPayload = {
+          provider: "netease",
+          contentType: "playlist",
+          playlistId: record.playlistId,
+          title: record.playlistId,
+          level: record.level,
+          vcrid: record.vcrid
+        };
+        if (!historyStore.data.records[historyKey(playlistPayload)]) {
+          recordHistory(playlistPayload, "imported", { deferSave: true });
+          changed = true;
+        }
+      }
+      const songPayload = {
+        provider: "netease",
+        contentType: "song",
+        songId: record.songId,
+        playlistId: record.playlistId,
+        title: record.name || record.part,
+        name: record.name,
+        artist: record.artist,
+        album: record.album,
+        duration: record.duration,
+        level: record.level,
+        vcrid: record.vcrid
+      };
+      if (!historyStore.data.records[historyKey(songPayload)]) {
+        recordHistory(songPayload, "imported", { deferSave: true });
+        changed = true;
+      }
+    }
+  }
+  if (changed) historyStore.save();
+}
+
+class VcrIdStore {
+  constructor(filePath, maxId) {
+    this.filePath = filePath;
+    this.maxId = maxId;
+    this.data = {
+      version: 1,
+      nextId: VCRID_MIN,
+      records: {},
+      contentIndex: {},
+      manifests: {}
+    };
+    this.available = true;
+    this.lastGc = {
+      checkedAt: 0,
+      ranAt: 0,
+      deleted: 0,
+      before: 0,
+      after: 0,
+      reason: ""
+    };
+    this.load();
+  }
+
+  load() {
+    try {
+      if (!existsSync(this.filePath)) return;
+      const payload = JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, ""));
+      this.data = {
+        version: 1,
+        nextId: Math.max(VCRID_MIN, Number(payload.nextId || VCRID_MIN)),
+        records: payload.records && typeof payload.records === "object" ? payload.records : {},
+        contentIndex: payload.contentIndex && typeof payload.contentIndex === "object" ? payload.contentIndex : {},
+        manifests: payload.manifests && typeof payload.manifests === "object" ? payload.manifests : {}
+      };
+      this.rebuildIndex();
+    } catch (error) {
+      this.available = false;
+      console.warn(`[vcrid] failed to load store: ${error.message}`);
+    }
+  }
+
+  rebuildIndex() {
+    this.data.contentIndex = {};
+    for (const record of Object.values(this.data.records)) {
+      if (record?.contentKey) this.data.contentIndex[record.contentKey] = record.vcrid;
+    }
+  }
+
+  allocate(input) {
+    if (!this.available) throw new Error("vcrid_store_unavailable");
+    const now = Date.now();
+    const keys = this.lookupKeys(input);
+    for (const key of keys) {
+      const existingId = this.data.contentIndex[key];
+      if (existingId && this.data.records[String(existingId)]) {
+        const record = this.data.records[String(existingId)];
+        this.updateRecord(existingId, { ...input, contentKey: input.contentKey || key, lastAccessAt: now });
+        return record;
+      }
+    }
+
+    this.runGcIfNeeded(now);
+    const vcrid = this.nextFreeId();
+    const contentKey = input.contentKey || keys[0];
+    const record = {
+      vcrid,
+      provider: input.provider || "bilibili",
+      contentType: input.contentType || "page",
+      contentKey,
+      bvid: input.bvid || "",
+      aid: Number(input.aid || 0),
+      cid: Number(input.cid || 0),
+      songId: input.songId ? String(input.songId) : "",
+      playlistId: input.playlistId ? String(input.playlistId) : "",
+      page: Math.max(1, Number(input.page || 1)),
+      title: input.title || "",
+      part: input.part || "",
+      name: input.name || "",
+      artist: input.artist || "",
+      album: input.album || "",
+      level: input.level || "",
+      duration: Number(input.duration || 0),
+      manifestKey: input.manifestKey || "",
+      createdAt: now,
+      updatedAt: now,
+      lastAccessAt: now
+    };
+    this.data.records[String(vcrid)] = record;
+    this.data.contentIndex[contentKey] = vcrid;
+    for (const key of keys) if (!this.data.contentIndex[key]) this.data.contentIndex[key] = vcrid;
+    this.data.nextId = Math.min(this.maxId + 1, vcrid + 1);
+    if (!this.save()) {
+      delete this.data.records[String(vcrid)];
+      this.rebuildIndex();
+      throw new Error("vcrid_store_unavailable");
+    }
+    return record;
+  }
+
+  recordCount() {
+    return Object.keys(this.data.records || {}).length;
+  }
+
+  usageRatio() {
+    return this.maxId > 0 ? this.recordCount() / this.maxId : 0;
+  }
+
+  runGcIfNeeded(now = Date.now()) {
+    this.lastGc.checkedAt = now;
+    if (!VCRID_GC_ENABLED) {
+      this.lastGc.reason = "disabled";
+      return;
+    }
+    if (this.usageRatio() < VCRID_GC_USAGE_THRESHOLD) {
+      this.lastGc.reason = "below_threshold";
+      return;
+    }
+    this.collectGarbage(now);
+  }
+
+  collectGarbage(now = Date.now()) {
+    const before = this.recordCount();
+    const targetCount = Math.max(0, Math.floor(this.maxId * VCRID_GC_TARGET_USAGE));
+    const deleteLimit = Math.max(0, before - targetCount);
+    const minUnusedMs = Math.max(1, VCRID_GC_MIN_UNUSED_DAYS) * 86400 * 1000;
+    if (deleteLimit <= 0) {
+      this.lastGc = { checkedAt: now, ranAt: now, deleted: 0, before, after: before, reason: "target_not_below_current" };
+      return;
+    }
+
+    const candidates = Object.values(this.data.records || {})
+      .filter((record) => {
+        const lastAccessAt = Number(record?.lastAccessAt || record?.updatedAt || record?.createdAt || 0);
+        return record?.vcrid && lastAccessAt > 0 && now - lastAccessAt >= minUnusedMs;
+      })
+      .sort((left, right) => {
+        const leftTime = Number(left.lastAccessAt || left.updatedAt || left.createdAt || 0);
+        const rightTime = Number(right.lastAccessAt || right.updatedAt || right.createdAt || 0);
+        return leftTime - rightTime || Number(left.vcrid || 0) - Number(right.vcrid || 0);
+      })
+      .slice(0, deleteLimit);
+
+    if (!candidates.length) {
+      this.lastGc = { checkedAt: now, ranAt: now, deleted: 0, before, after: before, reason: "no_old_records" };
+      return;
+    }
+
+    const deletedIds = new Set();
+    for (const record of candidates) {
+      const id = String(record.vcrid);
+      if (this.data.records[id]) {
+        delete this.data.records[id];
+        deletedIds.add(Number(record.vcrid));
+      }
+    }
+    this.sanitizeManifests(deletedIds);
+    this.rebuildIndex();
+    this.data.nextId = VCRID_MIN;
+    if (!this.save()) throw new Error("vcrid_store_unavailable");
+
+    const after = this.recordCount();
+    const deleted = before - after;
+    stats.vcridGcRuns++;
+    stats.vcridGcDeleted += deleted;
+    markStatsDirty();
+    this.lastGc = { checkedAt: now, ranAt: now, deleted, before, after, reason: "threshold" };
+    console.log("[vcrid-gc]", JSON.stringify(this.lastGc));
+  }
+
+  sanitizeManifests(deletedIds) {
+    if (!deletedIds?.size) return;
+    for (const manifest of Object.values(this.data.manifests || {})) {
+      if (!Array.isArray(manifest?.items)) continue;
+      for (const item of manifest.items) {
+        if (deletedIds.has(Number(item?.vcrid || 0))) item.vcrid = 0;
+      }
+      manifest.updatedAt = Date.now();
+    }
+  }
+
+  lookupKeys(input) {
+    const keys = [];
+    if (input.contentKey) keys.push(input.contentKey);
+    if (input.provider === "netease") {
+      if (input.songId) keys.push(neteaseSongContentKey(input.songId, input.level));
+      return [...new Set(keys.filter(Boolean))];
+    }
+    if (input.cid) keys.push(videoContentKey(input.bvid, input.aid, input.cid));
+    keys.push(tempVideoContentKey(input.bvid, input.aid, input.page || 1));
+    return [...new Set(keys.filter(Boolean))];
+  }
+
+  nextFreeId() {
+    for (let id = Math.max(VCRID_MIN, Number(this.data.nextId || VCRID_MIN)); id <= this.maxId; id++) {
+      if (!this.data.records[String(id)]) return id;
+    }
+    for (let id = VCRID_MIN; id < Math.max(VCRID_MIN, Number(this.data.nextId || VCRID_MIN)); id++) {
+      if (!this.data.records[String(id)]) return id;
+    }
+    throw new Error("vcrid_pool_exhausted");
+  }
+
+  get(vcrid) {
+    return this.data.records[String(vcrid)] || null;
+  }
+
+  touch(vcrid, options = {}) {
+    const record = this.get(vcrid);
+    if (!record) return;
+    const now = Date.now();
+    record.lastAccessAt = now;
+    if (options.played) {
+      record.lastPlayedAt = now;
+      record.playCount = Number(record.playCount || 0) + 1;
+    }
+    this.save();
+  }
+
+  updateRecord(vcrid, patch) {
+    const record = this.get(vcrid);
+    if (!record) return null;
+    const previousKey = record.contentKey;
+    Object.assign(record, patch, {
+      vcrid: record.vcrid,
+      updatedAt: Date.now(),
+      lastAccessAt: patch.lastAccessAt || Date.now()
+    });
+    if (previousKey && previousKey !== record.contentKey && this.data.contentIndex[previousKey] === record.vcrid) {
+      delete this.data.contentIndex[previousKey];
+    }
+    if (record.contentKey) this.data.contentIndex[record.contentKey] = record.vcrid;
+    if (record.provider === "netease") {
+      if (record.songId) this.data.contentIndex[neteaseSongContentKey(record.songId, record.level)] = record.vcrid;
+    } else {
+      if (record.cid) this.data.contentIndex[videoContentKey(record.bvid, record.aid, record.cid)] = record.vcrid;
+      this.data.contentIndex[tempVideoContentKey(record.bvid, record.aid, record.page)] = record.vcrid;
+    }
+    this.save();
+    return record;
+  }
+
+  saveManifest(key, manifest) {
+    this.data.manifests[key] = { ...manifest, updatedAt: Date.now() };
+    if (!this.save()) throw new Error("vcrid_store_unavailable");
+  }
+
+  getManifest(key) {
+    return this.data.manifests[key] || null;
+  }
+
+  save() {
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true });
+      const tmpFile = `${this.filePath}.tmp`;
+      writeFileSync(tmpFile, `${JSON.stringify(this.data, null, 2)}\n`, "utf8");
+      renameSync(tmpFile, this.filePath);
+      return true;
+    } catch (error) {
+      this.available = false;
+      console.warn(`[vcrid] failed to save store: ${error.message}`);
+      return false;
+    }
+  }
+}
+
+vcrIdStore = new VcrIdStore(VCRID_STORE_FILE, VCRID_MAX);
+
+class HistoryStore {
+  constructor(filePath) {
+    this.filePath = filePath;
+    this.data = {
+      version: 1,
+      nextId: 1,
+      records: {}
+    };
+    this.available = true;
+    this.load();
+  }
+
+  load() {
+    try {
+      if (!existsSync(this.filePath)) return;
+      const payload = JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, ""));
+      this.data = {
+        version: 1,
+        nextId: Math.max(1, Number(payload.nextId || 1)),
+        records: payload.records && typeof payload.records === "object" ? payload.records : {}
+      };
+    } catch (error) {
+      this.available = false;
+      console.warn(`[history] failed to load store: ${error.message}`);
+    }
+  }
+
+  upsert(input = {}, event = "seen", options = {}) {
+    if (!this.available) return null;
+    const key = input.key || historyKey(input);
+    if (!key) return null;
+    const now = Date.now();
+    const current = this.data.records[key] || {
+      id: this.data.nextId++,
+      key,
+      provider: input.provider || "",
+      contentType: input.contentType || "",
+      title: "",
+      firstSeenAt: now,
+      lastSeenAt: now,
+      seenCount: 0,
+      events: {},
+      vcrids: []
+    };
+
+    current.provider = input.provider || current.provider || "";
+    current.contentType = input.contentType || current.contentType || "";
+    current.title = firstNonEmpty(input.title, input.name, current.title, input.part);
+    current.sourceUrl = firstNonEmpty(input.sourceUrl, current.sourceUrl);
+    current.normalizedUrl = firstNonEmpty(input.normalizedUrl, current.normalizedUrl);
+    current.bvid = firstNonEmpty(input.bvid, current.bvid);
+    current.aid = normalizeAid(input.aid || current.aid || "");
+    current.cid = normalizeAid(input.cid || current.cid || "");
+    current.page = readPositiveInt(input.page || current.page, 0);
+    current.pagesCount = Math.max(Number(current.pagesCount || 0), Number(input.pagesCount || input.totalPages || 0));
+    current.songId = firstNonEmpty(input.songId, current.songId);
+    current.playlistId = firstNonEmpty(input.playlistId, current.playlistId);
+    current.artist = firstNonEmpty(input.artist, current.artist);
+    current.album = firstNonEmpty(input.album, current.album);
+    current.level = firstNonEmpty(input.level, current.level);
+    current.duration = Math.max(Number(current.duration || 0), Number(input.duration || 0));
+    current.lastSeenAt = now;
+    current.seenCount = Number(current.seenCount || 0) + 1;
+    current.events = current.events && typeof current.events === "object" ? current.events : {};
+    current.events[event] = Number(current.events[event] || 0) + 1;
+    current.vcrids = Array.isArray(current.vcrids) ? current.vcrids : [];
+    if (input.vcrid) {
+      const id = Number(input.vcrid);
+      if (id > 0 && !current.vcrids.includes(id)) current.vcrids.push(id);
+      current.vcrids = current.vcrids.slice(-200);
+    }
+
+    this.data.records[key] = current;
+    if (!options.deferSave) this.save();
+    return current;
+  }
+
+  list({ page = 1, pageSize = 20, provider = "", contentType = "" } = {}) {
+    const normalizedPageSize = Math.min(100, Math.max(1, Number(pageSize || 20)));
+    const all = Object.values(this.data.records || {})
+      .filter((record) => !provider || record.provider === provider)
+      .filter((record) => !contentType || record.contentType === contentType)
+      .sort((left, right) => Number(right.lastSeenAt || 0) - Number(left.lastSeenAt || 0));
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / normalizedPageSize));
+    const currentPage = Math.min(Math.max(1, Number(page || 1)), totalPages);
+    const start = (currentPage - 1) * normalizedPageSize;
+    return {
+      page: currentPage,
+      pageSize: normalizedPageSize,
+      total,
+      totalPages,
+      items: all.slice(start, start + normalizedPageSize)
+    };
+  }
+
+  save() {
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true });
+      const tmpFile = `${this.filePath}.tmp`;
+      writeFileSync(tmpFile, `${JSON.stringify(this.data, null, 2)}\n`, "utf8");
+      renameSync(tmpFile, this.filePath);
+      return true;
+    } catch (error) {
+      this.available = false;
+      console.warn(`[history] failed to save store: ${error.message}`);
+      return false;
+    }
+  }
+}
+
+historyStore = new HistoryStore(HISTORY_STORE_FILE);
+seedHistoryFromExistingStores();
+
+function recordBilibiliHistoryFromTsv(tsv, sourceUrl = "", normalizedUrl = "", event = "danmaku") {
+  recordHistory({
+    provider: "bilibili",
+    contentType: "video",
+    sourceUrl,
+    normalizedUrl,
+    bvid: headerValue(tsv, "bvid"),
+    aid: headerValue(tsv, "aid"),
+    cid: headerValue(tsv, "cid"),
+    page: headerValue(tsv, "page"),
+    title: headerValue(tsv, "title"),
+    part: headerValue(tsv, "part"),
+    vcrid: headerValue(tsv, "vcrid")
+  }, event);
+}
+
+function recordNeteasePlaylistHistory(payload, event = "seen") {
+  recordHistory({
+    provider: "netease",
+    contentType: "playlist",
+    sourceUrl: payload.inputUrl || "",
+    normalizedUrl: payload.normalizedUrl || "",
+    playlistId: payload.playlistId || "",
+    title: payload.title || payload.playlistId || "",
+    pagesCount: payload.totalPages || payload.totalTracks || 0,
+    level: payload.level || NETEASE_DEFAULT_LEVEL,
+    vcrid: payload.selectedVcrid || 0
+  }, event);
+}
+
+function recordNeteaseSongHistory(payload, event = "seen") {
+  const page = Array.isArray(payload.pages) ? payload.pages[0] : null;
+  recordHistory({
+    provider: "netease",
+    contentType: "song",
+    sourceUrl: payload.inputUrl || "",
+    normalizedUrl: payload.normalizedUrl || "",
+    songId: payload.selectedSongId || payload.songId || page?.songId || "",
+    playlistId: payload.playlistId || "",
+    title: page?.title || page?.name || payload.title || payload.name || "",
+    name: page?.name || payload.name || "",
+    artist: page?.artist || payload.artist || "",
+    album: page?.album || payload.album || "",
+    duration: page?.duration || payload.duration || 0,
+    level: payload.level || page?.level || NETEASE_DEFAULT_LEVEL,
+    vcrid: payload.selectedVcrid || page?.vcrid || 0
+  }, event);
+}
+
+function recordHistoryFromVcrRecord(record, event = "vcrid") {
+  if (!record) return;
+  if (record.provider === "netease") {
+    if (record.playlistId) {
+      recordHistory({
+        provider: "netease",
+        contentType: "playlist",
+        playlistId: record.playlistId,
+        title: record.playlistId,
+        level: record.level,
+        vcrid: record.vcrid
+      }, event);
+    }
+    recordHistory({
+      provider: "netease",
+      contentType: "song",
+      songId: record.songId,
+      playlistId: record.playlistId,
+      title: record.name || record.part,
+      name: record.name,
+      artist: record.artist,
+      album: record.album,
+      duration: record.duration,
+      level: record.level,
+      vcrid: record.vcrid
+    }, event);
+    return;
+  }
+  if (record.provider === "bilibili") {
+    recordHistory({
+      provider: "bilibili",
+      contentType: "video",
+      bvid: record.bvid,
+      aid: record.aid,
+      cid: record.cid,
+      page: record.page,
+      title: record.title,
+      part: record.part,
+      duration: record.duration,
+      vcrid: record.vcrid
+    }, event);
   }
 }
 
@@ -422,6 +1557,14 @@ function savePersistedStats() {
         playerDanmakuRequests: stats.playerDanmakuRequests,
         apiDanmakuRequests: stats.apiDanmakuRequests,
         resolveRequests: stats.resolveRequests,
+        apiPagesRequests: stats.apiPagesRequests,
+        apiLyricsRequests: stats.apiLyricsRequests,
+        bilibiliPagesManifestRequests: stats.bilibiliPagesManifestRequests,
+        bilibiliListManifestRequests: stats.bilibiliListManifestRequests,
+        neteasePlaylistManifestRequests: stats.neteasePlaylistManifestRequests,
+        neteaseSongManifestRequests: stats.neteaseSongManifestRequests,
+        vcridGcRuns: stats.vcridGcRuns,
+        vcridGcDeleted: stats.vcridGcDeleted,
         legacyRejected: stats.legacyRejected,
         errors: stats.errors,
         emittedDanmakuRows: stats.emittedDanmakuRows
@@ -600,6 +1743,444 @@ async function getNeteaseSongDirect(input) {
       selectedPage: input.page || 1
     };
   });
+}
+
+function buildNeteasePlaylistResponse({ source, input, playlist, origin, selectedIndex }) {
+  const tracks = normalizeNeteaseTracks(playlist.tracks || []);
+  const total = tracks.length;
+  const selectedPage = total ? Math.min(Math.max(readPositiveInt(selectedIndex, 1), 1), total) : 0;
+  const level = normalizeNeteaseLevel(input.level || NETEASE_DEFAULT_LEVEL);
+  const playlistId = String(playlist.id || input.playlistId || "");
+  const manifestKey = `netease-playlist:${playlistId}:${level}`;
+  let warning = "";
+  let vcridStoreError = "";
+  const records = tracks.map((track, index) => {
+    if (warning) return null;
+    try {
+      return vcrIdStore.allocate({
+        provider: "netease",
+        contentType: "playlist-item",
+        contentKey: neteaseSongContentKey(track.songId, level),
+        songId: track.songId,
+        playlistId,
+        page: index + 1,
+        part: track.name,
+        name: track.name,
+        artist: track.artist,
+        album: track.album,
+        level,
+        duration: track.duration,
+        manifestKey
+      });
+    } catch (error) {
+      warning = "vcrid_store_unavailable";
+      vcridStoreError = error.message || warning;
+      return null;
+    }
+  });
+  if (!warning) {
+    try {
+      vcrIdStore.saveManifest(manifestKey, {
+        manifestType: "netease-playlist",
+        provider: "netease",
+        playlistId,
+        title: playlist.name || "",
+        level,
+        items: tracks.map((track, index) => ({ ...track, vcrid: records[index]?.vcrid || 0, index: index + 1 }))
+      });
+    } catch (error) {
+      warning = "vcrid_store_unavailable";
+      vcridStoreError = error.message || warning;
+    }
+  }
+
+  const selected = tracks[selectedPage - 1] || null;
+  const selectedRecord = records[selectedPage - 1] || null;
+  const pages = tracks.map((track, index) => {
+    const pageNumber = index + 1;
+    const pageVcrid = records[index]?.vcrid || 0;
+    const urls = buildPlaybackUrls({
+      origin,
+      vcrid: pageVcrid,
+      sourceUrl: neteaseSongUrlForTrack(track),
+      page: 1
+    });
+    return {
+      page: pageNumber,
+      songId: track.songId,
+      title: track.name,
+      name: track.name,
+      artist: track.artist,
+      album: track.album,
+      duration: track.duration,
+      level,
+      vcrid: pageVcrid,
+      playUrl: urls.playUrl,
+      danmakuUrl: urls.danmakuUrl,
+      resolveUrl: urls.resolveUrl
+    };
+  });
+
+  const response = {
+    type: "netease-playlist",
+    provider: "netease",
+    inputUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    playlistId,
+    title: playlist.name || "",
+    selectedPage,
+    selectedSongId: selected?.songId || "",
+    selectedVcrid: selectedRecord?.vcrid || 0,
+    totalPages: total,
+    totalTracks: total,
+    level,
+    pages
+  };
+  if (warning) {
+    response.warning = warning;
+    response.vcridStoreError = vcridStoreError;
+  }
+  return response;
+}
+
+function buildNeteaseSongResponse({ source, input, origin }) {
+  const level = normalizeNeteaseLevel(input.level || NETEASE_DEFAULT_LEVEL);
+  const track = {
+    songId: String(input.songId || ""),
+    name: "",
+    artist: "",
+    album: "",
+    duration: 0
+  };
+  let warning = "";
+  let vcridStoreError = "";
+  let record = null;
+  try {
+    record = vcrIdStore.allocate({
+      provider: "netease",
+      contentType: "song",
+      contentKey: neteaseSongContentKey(track.songId, level),
+      songId: track.songId,
+      page: 1,
+      part: track.name,
+      name: track.name,
+      artist: track.artist,
+      album: track.album,
+      level,
+      duration: track.duration
+    });
+  } catch (error) {
+    warning = "vcrid_store_unavailable";
+    vcridStoreError = error.message || warning;
+  }
+  const urls = buildPlaybackUrls({
+    origin,
+    vcrid: record?.vcrid || 0,
+    sourceUrl: input.normalizedUrl || source,
+    page: 1
+  });
+  const response = {
+    type: "netease-song",
+    provider: "netease",
+    inputUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    songId: track.songId,
+    selectedPage: 1,
+    selectedSongId: track.songId,
+    selectedVcrid: record?.vcrid || 0,
+    totalPages: 1,
+    totalTracks: 1,
+    level,
+    pages: [{
+      page: 1,
+      songId: track.songId,
+      title: track.name,
+      name: track.name,
+      artist: track.artist,
+      album: track.album,
+      duration: track.duration,
+      level,
+      vcrid: record?.vcrid || 0,
+      playUrl: urls.playUrl,
+      danmakuUrl: urls.danmakuUrl,
+      resolveUrl: urls.resolveUrl
+    }]
+  };
+  if (warning) {
+    response.warning = warning;
+    response.vcridStoreError = vcridStoreError;
+  }
+  return response;
+}
+
+function normalizeNeteaseTracks(tracks) {
+  if (!Array.isArray(tracks)) return [];
+  return tracks.map(normalizeNeteaseTrack).filter((track) => track.songId);
+}
+
+function normalizeNeteaseTrack(track) {
+  const song = track?.song || track?.resource || track || {};
+  const songId = String(normalizeNumericId(song.id || song.songId || track?.id || track?.songId || "") || "");
+  const artistValue = song.artist || song.artists || song.ar || track?.artist || track?.artists || track?.ar || "";
+  const albumValue = song.album || song.al || track?.album || track?.al || "";
+  return {
+    songId,
+    name: String(song.name || song.title || track?.name || track?.title || "").trim(),
+    artist: normalizeNeteaseArtist(artistValue),
+    album: normalizeNeteaseAlbum(albumValue),
+    duration: normalizeNeteaseDurationSeconds(song.duration || song.dt || track?.duration || track?.dt || 0)
+  };
+}
+
+function normalizeNeteaseArtist(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => item?.name || item?.alias || item).filter(Boolean).join(" / ");
+  }
+  if (value && typeof value === "object") return String(value.name || value.alias || "").trim();
+  return String(value || "").trim();
+}
+
+function normalizeNeteaseAlbum(value) {
+  if (value && typeof value === "object") return String(value.name || value.title || "").trim();
+  return String(value || "").trim();
+}
+
+function normalizeNeteaseDurationSeconds(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.floor(number > 86400 ? number / 1000 : number);
+}
+
+function neteaseSongContentKey(songId, level) {
+  return `netease:song:${normalizeNumericId(songId)}:level:${normalizeNeteaseLevel(level || NETEASE_DEFAULT_LEVEL)}`;
+}
+
+function neteaseSongUrlForTrack(track) {
+  return `https://music.163.com/song?id=${encodeURIComponent(track.songId || "")}`;
+}
+
+async function resolveNeteaseRecord(record, options = {}) {
+  if (!record || record.provider !== "netease" || !record.songId) throw new Error("vcrid_not_found");
+  const level = normalizeNeteaseLevel(record.level || NETEASE_DEFAULT_LEVEL);
+  const resolved = await getNeteaseSongDirect({
+    songId: String(record.songId),
+    rawInput: String(record.songId),
+    level,
+    page: record.page || 1
+  });
+  vcrIdStore.touch(record.vcrid, options);
+  return {
+    ...resolved,
+    name: resolved.name || record.name || "",
+    artist: resolved.artist || record.artist || "",
+    album: resolved.album || record.album || "",
+    level: resolved.level || level
+  };
+}
+
+async function buildNeteaseDanmakuTsv(record) {
+  const lyrics = await getNeteaseLyrics(record.songId);
+  const lines = normalizeLyricDanmakuLines(lyrics.lines || []);
+  const title = lyrics.name || record.name || record.part || "";
+  const artist = lyrics.artist || record.artist || "";
+  const album = lyrics.album || record.album || "";
+  const header = [
+    "#YBDM/1",
+    `#manifest_type=${record.manifestKey ? "netease-playlist" : "netease-song"}`,
+    "#provider=netease",
+    `#vcrid=${record.vcrid || ""}`,
+    `#vcrid_max=${VCRID_MAX}`,
+    `#song_id=${escapeField(record.songId || "")}`,
+    `#playlist_id=${escapeField(record.playlistId || "")}`,
+    `#page=${record.page || 1}`,
+    `#title=${escapeField(title)}`,
+    `#artist=${escapeField(artist)}`,
+    `#album=${escapeField(album)}`,
+    `#cover=${escapeField(lyrics.coverUrl || "")}`,
+    `#level=${escapeField(record.level || NETEASE_DEFAULT_LEVEL)}`,
+    `#count=${lines.length}`,
+    "#columns=progressMs\tmode\tcolor\tfontSize\tpool\tcontent",
+  ];
+  if (lyrics.nolyric) header.push("#notice=nolyric");
+  if (lyrics.uncollected) header.push("#notice=uncollected");
+  const body = lines.map((line) => [
+    line.timeMs,
+    4,
+    16777215,
+    25,
+    0,
+    escapeField(line.text)
+  ].join("\t"));
+  return `${header.join("\n")}\n${body.join("\n")}\n`;
+}
+
+function normalizeLyricDanmakuLines(lines) {
+  const out = [];
+  const seen = new Set();
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const timeMs = Math.max(0, Number(line?.timeMs || 0));
+    const original = String(line?.text || "").trim();
+    const translation = String(line?.translation || "").trim();
+    for (const text of [original, translation && translation !== original ? translation : ""]) {
+      if (!text) continue;
+      const key = `${timeMs}:${text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ timeMs, text });
+    }
+  }
+  return out.sort((left, right) => left.timeMs - right.timeMs);
+}
+
+async function resolveLyricsTarget(requestUrl) {
+  const vcridResult = parseVcridParam(requestUrl);
+  if (vcridResult.present) {
+    if (!vcridResult.ok) return { error: "invalid_vcrid", status: 400 };
+    const record = vcrIdStore.get(vcridResult.vcrid);
+    if (!record) return { error: "vcrid_not_found", status: 404 };
+    if (record.provider !== "netease" || !record.songId) {
+      return { error: "lyrics_not_supported_for_provider", status: 400 };
+    }
+    vcrIdStore.touch(record.vcrid);
+    return {
+      vcrid: record.vcrid,
+      songId: String(record.songId),
+      name: record.name || record.part || "",
+      artist: record.artist || "",
+      album: record.album || ""
+    };
+  }
+
+  const songId = normalizeNumericId(requestUrl.searchParams.get("songId") || requestUrl.searchParams.get("id") || "");
+  if (songId) return { songId };
+
+  const source = requestUrl.searchParams.get("url") || "";
+  if (source) {
+    const whitelist = validateInputSource(source);
+    if (!whitelist.allowed) return { error: whitelist.error || "unsupported_url", status: 400 };
+    const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 1);
+    const input = await parseNeteaseInput(source, forcedPage);
+    if (!input) return { error: "unsupported_lyrics_url", status: 400 };
+    if (input.type === "song") return { songId: input.songId };
+    const playlist = await getNeteasePlaylist(input);
+    const tracks = normalizeNeteaseTracks(playlist.tracks || []);
+    const index = Math.min(Math.max(input.page || 1, 1), tracks.length) - 1;
+    const track = tracks[index] || null;
+    if (!track?.songId) return { error: "playlist_track_not_found", status: 404 };
+    return {
+      songId: track.songId,
+      name: track.name,
+      artist: track.artist,
+      album: track.album
+    };
+  }
+
+  return { error: "missing_vcrid_or_song_id", status: 400 };
+}
+
+async function getNeteaseLyrics(songId) {
+  const id = normalizeNumericId(songId);
+  if (!id) throw new Error("missing_song_id");
+  return getSimpleCached(neteaseLyricsCache, `netease-lyrics:${id}`, NETEASE_LYRICS_CACHE_TTL_MS, NETEASE_LYRICS_CACHE_MAX_ENTRIES, async () => {
+    const [lyrics, detail] = await Promise.all([
+      fetchNeteaseLyricPayload(id),
+      fetchNeteaseSongDetail(id).catch(() => ({}))
+    ]);
+    const lyric = String(lyrics?.lrc?.lyric || "");
+    const translatedLyric = String(lyrics?.tlyric?.lyric || "");
+    const song = detail.song || {};
+    return {
+      songId: id,
+      name: song.name || "",
+      artist: song.artist || "",
+      album: song.album || "",
+      coverUrl: song.coverUrl || "",
+      lyric,
+      translatedLyric,
+      lines: parseLrcLines(lyric, translatedLyric),
+      nolyric: Boolean(lyrics?.nolyric),
+      uncollected: Boolean(lyrics?.uncollected)
+    };
+  });
+}
+
+async function fetchNeteaseLyricPayload(songId) {
+  const url = new URL("https://music.163.com/api/song/lyric");
+  url.searchParams.set("id", String(songId));
+  url.searchParams.set("lv", "1");
+  url.searchParams.set("kv", "1");
+  url.searchParams.set("tv", "-1");
+  return fetchNeteaseJson(url, "NetEase lyric");
+}
+
+async function fetchNeteaseSongDetail(songId) {
+  const url = new URL("https://music.163.com/api/song/detail");
+  url.searchParams.set("ids", `[${songId}]`);
+  const payload = await fetchNeteaseJson(url, "NetEase song detail");
+  const song = Array.isArray(payload?.songs) ? payload.songs[0] : null;
+  if (!song) return {};
+  const artists = Array.isArray(song.artists || song.ar)
+    ? (song.artists || song.ar).map((item) => item?.name || item).filter(Boolean).join(" / ")
+    : "";
+  const album = song.album || song.al || {};
+  return {
+    song: {
+      name: song.name || "",
+      artist: artists,
+      album: album.name || "",
+      coverUrl: normalizePlayableUrl(album.picUrl || album.pic || "")
+    }
+  };
+}
+
+async function fetchNeteaseJson(url, label) {
+  const response = await fetchWithTimeout(url, {
+    headers: {
+      "Accept": "application/json, text/plain, */*",
+      "Referer": "https://music.163.com/",
+      "User-Agent": USER_AGENT
+    }
+  }, ZNNU_FETCH_TIMEOUT_MS, label);
+  const text = await response.text();
+  if (!response.ok) {
+    stats.upstreamErrors++;
+    markStatsDirty();
+    throw new Error(`${label} failed with HTTP ${response.status}.`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${label} returned non-JSON response.`);
+  }
+}
+
+function parseLrcLines(lyric, translatedLyric = "") {
+  const translated = new Map();
+  for (const line of parseSingleLrc(translatedLyric)) {
+    if (line.text && !translated.has(line.timeMs)) translated.set(line.timeMs, line.text);
+  }
+  return parseSingleLrc(lyric)
+    .map((line) => ({ ...line, translation: translated.get(line.timeMs) || "" }))
+    .sort((left, right) => left.timeMs - right.timeMs);
+}
+
+function parseSingleLrc(text) {
+  const out = [];
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const stamps = [...rawLine.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g)];
+    if (!stamps.length) continue;
+    const content = rawLine.replace(/\[[^\]]+\]/g, "").trim();
+    for (const stamp of stamps) {
+      const minute = Number(stamp[1] || 0);
+      const second = Number(stamp[2] || 0);
+      const fraction = String(stamp[3] || "0").padEnd(3, "0").slice(0, 3);
+      out.push({
+        timeMs: (minute * 60 + second) * 1000 + Number(fraction),
+        text: content
+      });
+    }
+  }
+  return out;
 }
 
 async function postZnnuForm(path, payload) {
@@ -795,6 +2376,463 @@ async function parseLiveInput(rawValue) {
     roomId,
     normalizedUrl
   };
+}
+
+function parseBilibiliListInput(rawValue) {
+  let normalizedUrl = decodeRepeatedly(rawValue);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+  normalizedUrl = extractSupportedUrlFromText(normalizedUrl);
+  normalizedUrl = unwrapKnownPlayerUrl(normalizedUrl);
+  normalizedUrl = decodeRepeatedly(normalizedUrl);
+
+  const parsed = tryParseFlexibleUrl(normalizedUrl);
+  if (!parsed) return null;
+
+  const host = normalizeHost(parsed.hostname);
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  const sid = normalizeAid(parsed.searchParams.get("sid") || parsed.searchParams.get("series_id") || parsed.searchParams.get("season_id") || "");
+  const type = String(parsed.searchParams.get("type") || "").trim().toLowerCase();
+
+  const mediaMatch = path.match(/^\/(?:list|medialist\/play)\/ml(\d+)$/i);
+  if (mediaMatch) {
+    return {
+      type: "media-list",
+      mediaId: normalizeAid(mediaMatch[1]),
+      normalizedUrl: parsed.href
+    };
+  }
+
+  if (host === "bilibili.com" || host === "m.bilibili.com") {
+    const listMatch = path.match(/^\/list\/(\d+)$/i);
+    if (listMatch && sid) {
+      return {
+        type: type === "season" ? "season" : "series",
+        mid: normalizeAid(listMatch[1]),
+        sid,
+        normalizedUrl: parsed.href
+      };
+    }
+  }
+
+  if (host === "space.bilibili.com") {
+    const listPath = path.match(/^\/(\d+)\/lists(?:\/(\d+))?$/i);
+    if (listPath) {
+      const pathSid = normalizeAid(listPath[2] || "");
+      const effectiveSid = sid || pathSid;
+      if (effectiveSid) {
+        return {
+          type: type === "season" ? "season" : "series",
+          mid: normalizeAid(listPath[1]),
+          sid: effectiveSid,
+          normalizedUrl: parsed.href
+        };
+      }
+    }
+  }
+
+  if (isAllowedBilibiliPath(parsed, host) && (/^\/(?:list|medialist)\//i.test(path) || host === "space.bilibili.com")) {
+    return {
+      type: "page-source",
+      normalizedUrl: parsed.href
+    };
+  }
+
+  return null;
+}
+
+async function getBilibiliList(input) {
+  const key = `bili-list:${input.type}:${input.mediaId || ""}:${input.mid || ""}:${input.sid || ""}:${input.normalizedUrl || ""}`;
+  return getSimpleCached(bilibiliListCache, key, VIEW_CACHE_TTL_MS, VIEW_CACHE_MAX_ENTRIES, async () => {
+    const strategies = [];
+    if (input.type === "series") strategies.push(() => fetchBilibiliSeriesList(input));
+    if (input.type === "season") strategies.push(() => fetchBilibiliSeasonList(input));
+    if (input.type === "media-list") strategies.push(() => fetchBilibiliMediaList(input));
+    strategies.push(() => fetchBilibiliListFromPageSource(input.normalizedUrl));
+
+    let lastError = null;
+    for (const strategy of strategies) {
+      try {
+        const list = await strategy();
+        if (list?.items?.length) return list;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("Bilibili list has no videos.");
+  });
+}
+
+async function fetchBilibiliSeriesList(input) {
+  const items = [];
+  let page = 1;
+  let title = "";
+  for (; page <= 20; page++) {
+    const url = new URL("https://api.bilibili.com/x/series/archives");
+    url.searchParams.set("mid", String(input.mid));
+    url.searchParams.set("series_id", String(input.sid));
+    url.searchParams.set("only_normal", "true");
+    url.searchParams.set("sort", "asc");
+    url.searchParams.set("pn", String(page));
+    url.searchParams.set("ps", "30");
+    const payload = await fetchJson(url);
+    if (payload.code !== 0) throw new Error(`Bilibili series API failed: ${payload.message || payload.code}`);
+    const data = payload.data || {};
+    title ||= data.meta?.name || data.series?.name || "";
+    const archives = normalizeBilibiliArchiveArray(data.archives || data.aids || data.items || data.list);
+    items.push(...archives);
+    if (!archives.length || items.length >= Number(data.page?.total || data.total || items.length)) break;
+  }
+  return { type: "bilibili-list", sourceType: "series", title, items: uniqueBilibiliListItems(items) };
+}
+
+async function fetchBilibiliSeasonList(input) {
+  const items = [];
+  let page = 1;
+  let title = "";
+  for (; page <= 20; page++) {
+    const url = new URL("https://api.bilibili.com/x/polymer/web-space/seasons_archives_list");
+    url.searchParams.set("mid", String(input.mid));
+    url.searchParams.set("season_id", String(input.sid));
+    url.searchParams.set("sort_reverse", "false");
+    url.searchParams.set("page_num", String(page));
+    url.searchParams.set("page_size", "30");
+    const payload = await fetchJson(url);
+    if (payload.code !== 0) throw new Error(`Bilibili season API failed: ${payload.message || payload.code}`);
+    const data = payload.data || {};
+    title ||= data.meta?.name || data.season?.title || "";
+    const archives = normalizeBilibiliArchiveArray(data.archives || data.items || data.list);
+    items.push(...archives);
+    if (!archives.length || items.length >= Number(data.page?.total || data.total || items.length)) break;
+  }
+  return { type: "bilibili-list", sourceType: "season", title, items: uniqueBilibiliListItems(items) };
+}
+
+async function fetchBilibiliMediaList(input) {
+  const items = [];
+  let page = 1;
+  let title = "";
+  for (; page <= 20; page++) {
+    const url = new URL("https://api.bilibili.com/x/v3/fav/resource/list");
+    url.searchParams.set("media_id", String(input.mediaId));
+    url.searchParams.set("pn", String(page));
+    url.searchParams.set("ps", "20");
+    url.searchParams.set("keyword", "");
+    url.searchParams.set("order", "mtime");
+    url.searchParams.set("type", "0");
+    url.searchParams.set("tid", "0");
+    const payload = await fetchJson(url);
+    if (payload.code !== 0) throw new Error(`Bilibili media list API failed: ${payload.message || payload.code}`);
+    const data = payload.data || {};
+    title ||= data.info?.title || data.info?.media_list_title || "";
+    const archives = normalizeBilibiliArchiveArray(data.medias || data.items || data.list);
+    items.push(...archives);
+    if (!archives.length || !data.has_more) break;
+  }
+  return { type: "bilibili-list", sourceType: "media-list", title, items: uniqueBilibiliListItems(items) };
+}
+
+async function fetchBilibiliListFromPageSource(urlValue) {
+  const parsed = tryParseFlexibleUrl(urlValue);
+  if (!parsed) throw new Error("Invalid Bilibili list URL.");
+  const response = await fetchWithTimeout(parsed, { headers: biliHeaders() }, BILI_FETCH_TIMEOUT_MS, "Bilibili list page");
+  if (!response.ok) throw new Error(`Bilibili list page failed with HTTP ${response.status}.`);
+  const html = await response.text();
+  const jsonBlocks = extractEmbeddedJsonBlocks(html);
+  const items = [];
+  let title = "";
+  for (const block of jsonBlocks) {
+    title ||= findFirstStringField(block, ["title", "name"]);
+    items.push(...findBilibiliArchivesInObject(block));
+  }
+  return { type: "bilibili-list", sourceType: "page-source", title, items: uniqueBilibiliListItems(items) };
+}
+
+function buildBilibiliListResponse({ source, input, list, origin, selectedIndex }) {
+  const items = uniqueBilibiliListItems(list.items || []);
+  const total = items.length;
+  const selectedPage = total ? Math.min(Math.max(readPositiveInt(selectedIndex, 1), 1), total) : 0;
+  const manifestKey = `list:${input.type}:${input.mediaId || ""}:${input.mid || ""}:${input.sid || ""}:${input.normalizedUrl || ""}`;
+  let warning = "";
+  let vcridStoreError = "";
+  const records = items.map((item) => {
+    if (warning) return null;
+    try {
+      return vcrIdStore.allocate({
+        provider: "bilibili",
+        contentType: "list-item",
+        bvid: item.bvid || "",
+        aid: item.aid || 0,
+        cid: item.cid || 0,
+        page: 1,
+        title: item.title || item.part || "",
+        part: item.title || item.part || "",
+        duration: item.duration || 0,
+        manifestKey,
+        contentKey: item.cid ? videoContentKey(item.bvid, item.aid, item.cid) : tempVideoContentKey(item.bvid, item.aid, 1)
+      });
+    } catch (error) {
+      warning = "vcrid_store_unavailable";
+      vcridStoreError = error.message || warning;
+      return null;
+    }
+  });
+  if (!warning) {
+    try {
+      vcrIdStore.saveManifest(manifestKey, {
+        manifestType: "bilibili-list",
+        sourceType: list.sourceType || input.type,
+        title: list.title || "",
+        items: items.map((item, index) => ({ ...item, vcrid: records[index]?.vcrid || 0, index: index + 1 }))
+      });
+    } catch (error) {
+      warning = "vcrid_store_unavailable";
+      vcridStoreError = error.message || warning;
+    }
+  }
+
+  const selected = items[selectedPage - 1] || null;
+  const selectedRecord = records[selectedPage - 1] || null;
+  const pages = items.map((item, index) => {
+    const pageNumber = index + 1;
+    const pageVcrid = records[index]?.vcrid || 0;
+    const urls = buildPlaybackUrls({
+      origin,
+      vcrid: pageVcrid,
+      sourceUrl: bilibiliVideoUrlForItem(item),
+      page: 1
+    });
+    return {
+      page: pageNumber,
+      aid: item.aid || 0,
+      bvid: item.bvid || "",
+      cid: item.cid || 0,
+      part: item.title || item.part || "",
+      duration: item.duration || 0,
+      vcrid: pageVcrid,
+      playUrl: urls.playUrl,
+      danmakuUrl: urls.danmakuUrl,
+      resolveUrl: urls.resolveUrl
+    };
+  });
+
+  const response = {
+    type: "bilibili-list",
+    sourceType: list.sourceType || input.type,
+    inputUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    title: list.title || "",
+    selectedPage,
+    selectedBvid: selected?.bvid || "",
+    selectedAid: selected?.aid || 0,
+    selectedCid: selected?.cid || 0,
+    selectedVcrid: selectedRecord?.vcrid || 0,
+    totalPages: total,
+    pages
+  };
+  if (warning) {
+    response.warning = warning;
+    response.vcridStoreError = vcridStoreError;
+  }
+  return response;
+}
+
+function buildPlaybackUrls({ origin, vcrid, sourceUrl, page }) {
+  if (vcrid > 0) {
+    return {
+      playUrl: `${origin}/player/?vcrid=${vcrid}`,
+      danmakuUrl: `${origin}/api/danmaku?vcrid=${vcrid}`,
+      resolveUrl: `${origin}/api/resolve?vcrid=${vcrid}`
+    };
+  }
+  const encodedUrl = encodeURIComponent(sourceUrl || "");
+  const pageSuffix = page ? `&p=${Math.max(1, Number(page || 1))}` : "";
+  return {
+    playUrl: `${origin}/player/?url=${encodedUrl}${pageSuffix}`,
+    danmakuUrl: `${origin}/api/danmaku?url=${encodedUrl}${pageSuffix}`,
+    resolveUrl: `${origin}/api/resolve?url=${encodedUrl}${pageSuffix}`
+  };
+}
+
+function bilibiliVideoUrlForItem(item) {
+  if (item?.bvid) return `https://www.bilibili.com/video/${item.bvid}/`;
+  if (item?.aid) return `https://www.bilibili.com/video/av${item.aid}/`;
+  return "";
+}
+
+function normalizeBilibiliArchiveArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeBilibiliArchiveItem(item))
+    .filter((item) => item.bvid || item.aid);
+}
+
+function normalizeBilibiliArchiveItem(item) {
+  if (!item || typeof item !== "object") return {};
+  const archive = item.archive || item.arc || item.video || item.ugc || item;
+  const bvid = normalizeBvid(archive.bvid || item.bvid || "");
+  const aid = normalizeAid(archive.aid || archive.id || item.aid || item.id || "");
+  return {
+    bvid,
+    aid,
+    cid: normalizeAid(archive.cid || item.cid || ""),
+    title: String(archive.title || archive.name || item.title || item.name || "").trim(),
+    part: String(archive.part || item.part || "").trim(),
+    duration: normalizeDurationSeconds(archive.duration || archive.length || item.duration || item.length || 0)
+  };
+}
+
+function uniqueBilibiliListItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of normalizeBilibiliArchiveArray(items)) {
+    const key = item.bvid || `av${item.aid}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function registerVideoViewPages(view, input = {}) {
+  const records = new Map();
+  const bvid = view.bvid || input.bvid || "";
+  const aid = view.aid || input.aid || 0;
+  const title = view.title || "";
+  const pages = Array.isArray(view.pages) ? view.pages : [];
+  for (const pageItem of pages) {
+    const page = Number(pageItem.page || 1);
+    const cid = Number(pageItem.cid || 0);
+    try {
+      const record = vcrIdStore.allocate({
+        provider: "bilibili",
+        contentType: "page",
+        contentKey: videoContentKey(bvid, aid, cid),
+        bvid,
+        aid,
+        cid,
+        page,
+        title,
+        part: pageItem.part || title || "",
+        duration: Number(pageItem.duration || view.duration || 0)
+      });
+      records.set(cid, record);
+    } catch (error) {
+      records.unavailable = error.message || "vcrid_store_unavailable";
+    }
+  }
+  return records;
+}
+
+async function inputFromVcrRecord(record, options = {}) {
+  if (!record || record.provider !== "bilibili") throw new Error("vcrid_not_found");
+  const input = {
+    normalizedUrl: record.bvid ? `https://www.bilibili.com/video/${record.bvid}/` : "",
+    bvid: record.bvid || "",
+    aid: Number(record.aid || 0),
+    cid: Number(record.cid || 0),
+    page: Math.max(1, Number(record.page || 1))
+  };
+
+  if (!input.cid) {
+    const view = (await getVideoView(input)).value;
+    const selected = selectVideoPage(view, input);
+    const contentKey = videoContentKey(view.bvid || input.bvid, view.aid || input.aid, selected.cid);
+    vcrIdStore.updateRecord(record.vcrid, {
+      bvid: view.bvid || input.bvid,
+      aid: view.aid || input.aid,
+      cid: selected.cid,
+      page: selected.page,
+      title: view.title || record.title || "",
+      part: selected.part || record.part || "",
+      duration: selected.duration || record.duration || 0,
+      contentKey
+    });
+    input.bvid = view.bvid || input.bvid;
+    input.aid = view.aid || input.aid;
+    input.cid = selected.cid;
+    input.page = selected.page;
+  }
+
+  vcrIdStore.touch(record.vcrid, options);
+  return input;
+}
+
+function videoContentKey(bvid, aid, cid) {
+  return `bili:${normalizeBvid(bvid) || `av${normalizeAid(aid)}`}:cid:${Number(cid)}`;
+}
+
+function tempVideoContentKey(bvid, aid, page) {
+  return `bili:${normalizeBvid(bvid) || `av${normalizeAid(aid)}`}:page:${Math.max(1, Number(page || 1))}`;
+}
+
+function normalizeDurationSeconds(value) {
+  if (typeof value === "number") return Math.max(0, Math.floor(value));
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  if (/^\d+$/.test(text)) return Number.parseInt(text, 10);
+  const parts = text.split(":").map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => !Number.isFinite(part))) return 0;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function extractEmbeddedJsonBlocks(html) {
+  const blocks = [];
+  const initialMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?})\s*;\s*\(function\(\)/);
+  if (initialMatch) {
+    try {
+      blocks.push(JSON.parse(initialMatch[1]));
+    } catch {
+      // Ignore malformed embedded state.
+    }
+  }
+
+  const nextMatch = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (nextMatch) {
+    try {
+      blocks.push(JSON.parse(htmlDecode(nextMatch[1])));
+    } catch {
+      // Ignore malformed embedded state.
+    }
+  }
+
+  return blocks;
+}
+
+function findBilibiliArchivesInObject(value, out = [], depth = 0) {
+  if (!value || depth > 8) return out;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const archive = normalizeBilibiliArchiveItem(item);
+      if (archive.bvid || archive.aid) out.push(archive);
+      findBilibiliArchivesInObject(item, out, depth + 1);
+    }
+    return out;
+  }
+  if (typeof value !== "object") return out;
+  for (const child of Object.values(value)) findBilibiliArchivesInObject(child, out, depth + 1);
+  return out;
+}
+
+function findFirstStringField(value, names, depth = 0) {
+  if (!value || depth > 5) return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstStringField(item, names, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+  for (const name of names) {
+    const text = value[name];
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  for (const child of Object.values(value)) {
+    const found = findFirstStringField(child, names, depth + 1);
+    if (found) return found;
+  }
+  return "";
 }
 
 function parseLiveRoomId(url) {
@@ -1236,13 +3274,16 @@ function liveCandidateScore(protocolName, formatName, codecName, quality) {
   return score;
 }
 
-async function getDanmakuTsv(input) {
+async function getDanmakuTsv(input, options = {}) {
   const viewResult = await getVideoView(input);
   const view = viewResult.value;
   const selected = selectVideoPage(view, input);
-  const key = `dm:${selected.cid}`;
+  const key = options.manifestKey
+    ? `dm:${selected.cid}:manifest:${options.manifestKey}:v:${options.vcrid || 0}`
+    : `dm:${selected.cid}:pages`;
 
   return getCachedDanmaku(key, async () => {
+    const pageRecords = registerVideoViewPages(view, input);
     return buildDanmakuTsv({
       bvid: view.bvid || input.bvid || "",
       aid: view.aid || input.aid || 0,
@@ -1250,7 +3291,19 @@ async function getDanmakuTsv(input) {
       page: selected.page,
       title: view.title || "",
       part: selected.part || "",
-      duration: selected.duration || 0
+      duration: selected.duration || 0,
+      vcrid: options.vcrid || pageRecords.get(Number(selected.cid))?.vcrid || 0,
+      pageItems: (Array.isArray(view.pages) ? view.pages : []).map((pageItem, index) => {
+        const record = pageRecords.get(Number(pageItem.cid));
+        return {
+          page: Number(pageItem.page || index + 1),
+          cid: Number(pageItem.cid || 0),
+          duration: Number(pageItem.duration || view.duration || 0),
+          part: pageItem.part || "",
+          vcrid: record?.vcrid || 0
+        };
+      }),
+      listManifest: options.manifestKey ? vcrIdStore.getManifest(options.manifestKey) : null
     });
   });
 }
@@ -1275,6 +3328,9 @@ async function buildDanmakuTsv(video) {
 
   const header = [
     "#YBDM/1",
+    `#manifest_type=${video.listManifest ? "bilibili-list" : "bilibili-pages"}`,
+    `#vcrid=${video.vcrid || ""}`,
+    `#vcrid_max=${VCRID_MAX}`,
     `#bvid=${escapeField(video.bvid || "")}`,
     `#aid=${video.aid || ""}`,
     `#cid=${video.cid}`,
@@ -1284,6 +3340,31 @@ async function buildDanmakuTsv(video) {
     `#count=${all.length}`,
     "#columns=progressMs\tmode\tcolor\tfontSize\tpool\tcontent"
   ];
+  if (video.listManifest) {
+    header.push(`#source_type=${escapeField(video.listManifest.sourceType || "")}`);
+    header.push(`#pages_count=${Array.isArray(video.listManifest.items) ? video.listManifest.items.length : 0}`);
+    for (const item of video.listManifest.items || []) {
+      header.push([
+        `#list_item=${item.index || 1}`,
+        item.aid || 0,
+        escapeField(item.bvid || ""),
+        item.cid || 0,
+        item.duration || 0,
+        escapeField(item.title || item.part || ""),
+        item.vcrid || 0
+      ].join("\t"));
+    }
+  } else {
+    for (const item of video.pageItems || []) {
+      header.push([
+        `#page_item=${item.page}`,
+        item.cid || 0,
+        item.duration || 0,
+        escapeField(item.part || ""),
+        item.vcrid || 0
+      ].join("\t"));
+    }
+  }
   const body = all.map((item) => [
     item.progress,
     item.mode,
@@ -1604,6 +3685,7 @@ function pruneAllExpiredCaches() {
   trimDanmakuDiskCache();
   pruneExpiredCache(neteasePlaylistCache, NETEASE_PLAYLIST_CACHE_TTL_MS);
   pruneExpiredCache(neteaseUrlCache, NETEASE_URL_CACHE_TTL_MS);
+  pruneExpiredCache(neteaseLyricsCache, NETEASE_LYRICS_CACHE_TTL_MS);
   pruneFailureCache();
 }
 
@@ -1885,7 +3967,17 @@ function buildCacheStats() {
       viewEntries: viewCache.size,
       videoUrlEntries: videoUrlCache.size,
       danmakuEntries: danmakuCache.size,
+      neteaseLyricsEntries: neteaseLyricsCache.size,
       failureEntries: failureCache.size,
+      vcridEntries: vcrIdStore ? Object.keys(vcrIdStore.data.records || {}).length : 0,
+      vcridManifests: vcrIdStore ? Object.keys(vcrIdStore.data.manifests || {}).length : 0,
+      vcridStoreAvailable: Boolean(vcrIdStore?.available),
+      vcridUsageRatio: vcrIdStore ? vcrIdStore.usageRatio() : 0,
+      vcridLastGc: vcrIdStore ? vcrIdStore.lastGc : null,
+      vcridStoreFile: VCRID_STORE_FILE,
+      historyEntries: historyStore ? Object.keys(historyStore.data.records || {}).length : 0,
+      historyStoreAvailable: Boolean(historyStore?.available),
+      historyStoreFile: HISTORY_STORE_FILE,
       rateLimitBuckets: rateLimitBuckets.size
     },
     hits: {
@@ -1906,13 +3998,23 @@ function buildCacheStats() {
       failure: Math.floor(FAILURE_CACHE_TTL_MS / 1000),
       danmakuMemoryFallback: Math.floor(DANMAKU_CACHE_TTL_MS / 1000),
       danmakuDiskInitial: Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000),
-      danmakuDiskRefresh: Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)
+      danmakuDiskRefresh: Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000),
+      neteaseLyrics: Math.floor(NETEASE_LYRICS_CACHE_TTL_MS / 1000)
     },
     limits: {
       view: VIEW_CACHE_MAX_ENTRIES,
       videoUrl: VIDEO_URL_CACHE_MAX_ENTRIES,
       failure: FAILURE_CACHE_MAX_ENTRIES,
       danmaku: DANMAKU_CACHE_MAX_ENTRIES,
+      neteaseLyrics: NETEASE_LYRICS_CACHE_MAX_ENTRIES,
+      vcridMax: VCRID_MAX,
+      vcridGc: {
+        enabled: VCRID_GC_ENABLED,
+        usageThreshold: VCRID_GC_USAGE_THRESHOLD,
+        targetUsage: VCRID_GC_TARGET_USAGE,
+        minUnusedDays: VCRID_GC_MIN_UNUSED_DAYS
+      },
+      dashboardHistoryPageSize: DASHBOARD_HISTORY_PAGE_SIZE,
       dashboardDanmaku: DASHBOARD_DANMAKU_MAX_ENTRIES,
       danmakuDiskDir: DANMAKU_DISK_CACHE_DIR
     },
@@ -1925,6 +4027,14 @@ function buildCacheStats() {
       playerDanmakuRequests: stats.playerDanmakuRequests,
       apiDanmakuRequests: stats.apiDanmakuRequests,
       resolveRequests: stats.resolveRequests,
+      apiPagesRequests: stats.apiPagesRequests,
+      apiLyricsRequests: stats.apiLyricsRequests,
+      bilibiliPagesManifestRequests: stats.bilibiliPagesManifestRequests,
+      bilibiliListManifestRequests: stats.bilibiliListManifestRequests,
+      neteasePlaylistManifestRequests: stats.neteasePlaylistManifestRequests,
+      neteaseSongManifestRequests: stats.neteaseSongManifestRequests,
+      vcridGcRuns: stats.vcridGcRuns,
+      vcridGcDeleted: stats.vcridGcDeleted,
       unsupportedUrlRejected: stats.unsupportedUrlRejected,
       legacyRejected: stats.legacyRejected,
       rateLimited: stats.rateLimited,
@@ -1942,6 +4052,8 @@ function buildCacheStats() {
         player: RATE_LIMIT_PLAYER,
         apiDanmaku: RATE_LIMIT_API_DANMAKU,
         apiResolve: RATE_LIMIT_API_RESOLVE,
+        apiPages: RATE_LIMIT_API_PAGES,
+        apiLyrics: RATE_LIMIT_API_LYRICS,
         cacheStats: RATE_LIMIT_CACHE_STATS
       }
     },
@@ -1965,35 +4077,385 @@ function buildCacheStats() {
   };
 }
 
-function renderDashboard() {
+function buildBilibiliVideoSummaries(limit = 12) {
+  const groups = new Map();
+  const cachedTitles = cachedBilibiliTitlesByBvid();
+  const ensureGroup = ({ bvid, aid }) => {
+    const normalizedBvid = normalizeBvid(bvid);
+    const normalizedAid = normalizeAid(aid);
+    const key = normalizedBvid || (normalizedAid ? `av${normalizedAid}` : "");
+    if (!key) return null;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        bvid: normalizedBvid,
+        aid: normalizedAid,
+        title: "",
+        firstPart: "",
+        pages: new Set(),
+        playedPages: new Set(),
+        danmakuPages: new Set(),
+        vcrids: 0,
+        playCount: 0,
+        danmakuRows: 0,
+        lastAccessAt: 0,
+        lastPlayedAt: 0,
+        lastDanmakuAt: 0
+      };
+      groups.set(key, group);
+    }
+    return group;
+  };
+
+  const records = Object.values(vcrIdStore?.data?.records || {});
+  for (const record of records) {
+    if (!record || record.provider !== "bilibili") continue;
+    const group = ensureGroup({ bvid: record.bvid, aid: record.aid });
+    if (!group) continue;
+    if (!group.title) group.title = String(record.title || cachedTitles.get(group.bvid) || "").trim();
+    if (!group.firstPart && record.part) group.firstPart = String(record.part || "").trim();
+    const pageKey = record.cid ? `cid:${record.cid}` : `page:${Math.max(1, Number(record.page || 1))}`;
+    group.pages.add(pageKey);
+    group.vcrids++;
+    group.playCount += Number(record.playCount || 0);
+    if (Number(record.playCount || 0) > 0 || Number(record.lastPlayedAt || 0) > 0) {
+      group.playedPages.add(pageKey);
+    }
+    group.lastAccessAt = Math.max(group.lastAccessAt, Number(record.lastAccessAt || record.updatedAt || record.createdAt || 0));
+    group.lastPlayedAt = Math.max(group.lastPlayedAt, Number(record.lastPlayedAt || 0));
+  }
+
+  for (const entry of danmakuCache.values()) {
+    const text = entry?.value || "";
+    const bvid = normalizeBvid(headerValue(text, "bvid"));
+    const aid = normalizeAid(headerValue(text, "aid"));
+    const group = ensureGroup({ bvid, aid });
+    if (!group) continue;
+    const cid = normalizeAid(headerValue(text, "cid"));
+    const page = readPositiveInt(headerValue(text, "page"), 1);
+    const pageKey = cid ? `cid:${cid}` : `page:${page}`;
+    group.danmakuPages.add(pageKey);
+    if (!group.title) group.title = headerValue(text, "title");
+    if (!group.firstPart) group.firstPart = headerValue(text, "part");
+    group.danmakuRows += getDanmakuCount(text);
+    group.lastDanmakuAt = Math.max(group.lastDanmakuAt, Number(entry.lastAccessAt || entry.time || 0));
+    group.lastAccessAt = Math.max(group.lastAccessAt, Number(entry.lastAccessAt || entry.time || 0));
+  }
+
+  const items = [...groups.values()]
+    .map((group) => ({
+      key: group.key,
+      bvid: group.bvid,
+      aid: group.aid,
+      title: group.title || (group.pages.size === 1 ? group.firstPart : "") || group.bvid || `av${group.aid}`,
+      subtitle: group.bvid || `av${group.aid}`,
+      pagesCount: group.pages.size,
+      playedPagesCount: group.playedPages.size,
+      danmakuPagesCount: group.danmakuPages.size,
+      vcrids: group.vcrids,
+      playCount: group.playCount,
+      danmakuRows: group.danmakuRows,
+      lastAccessAt: group.lastAccessAt,
+      lastPlayedAt: group.lastPlayedAt,
+      lastDanmakuAt: group.lastDanmakuAt,
+      url: group.bvid
+        ? `https://www.bilibili.com/video/${group.bvid}/`
+        : `https://www.bilibili.com/video/av${group.aid}/`
+    }))
+    .sort((left, right) => (right.lastPlayedAt || right.lastAccessAt) - (left.lastPlayedAt || left.lastAccessAt));
+
+  return {
+    total: items.length,
+    hidden: Math.max(0, items.length - limit),
+    items: items.slice(0, limit)
+  };
+}
+
+function cachedBilibiliTitlesByBvid() {
+  const titles = new Map();
+  for (const entry of danmakuCache.values()) {
+    const text = entry?.value || "";
+    const bvid = normalizeBvid(headerValue(text, "bvid"));
+    const title = headerValue(text, "title");
+    if (bvid && title && !titles.has(bvid)) titles.set(bvid, title);
+  }
+  return titles;
+}
+
+async function backfillDashboardBilibiliTitles(limit = 4) {
+  if (!vcrIdStore?.available) return;
+  pruneAllExpiredCaches();
+  const cachedTitles = cachedBilibiliTitlesByBvid();
+  const candidates = [];
+  const seen = new Set();
+  for (const record of Object.values(vcrIdStore.data.records || {})) {
+    if (!record || record.provider !== "bilibili") continue;
+    const bvid = normalizeBvid(record.bvid);
+    const aid = normalizeAid(record.aid);
+    const key = bvid || (aid ? `av${aid}` : "");
+    if (!key || seen.has(key)) continue;
+    if (String(record.title || cachedTitles.get(bvid) || "").trim()) continue;
+    seen.add(key);
+    candidates.push({
+      bvid,
+      aid,
+      lastAccessAt: Number(record.lastAccessAt || record.updatedAt || record.createdAt || 0)
+    });
+  }
+
+  for (const item of candidates
+    .sort((left, right) => right.lastAccessAt - left.lastAccessAt)
+    .slice(0, limit)) {
+    try {
+      const view = (await getVideoView({
+        bvid: item.bvid,
+        aid: item.aid,
+        normalizedUrl: item.bvid
+          ? `https://www.bilibili.com/video/${item.bvid}/`
+          : `https://www.bilibili.com/video/av${item.aid}/`
+      })).value;
+      const title = String(view.title || "").trim();
+      if (!title) continue;
+      let changed = false;
+      for (const record of Object.values(vcrIdStore.data.records || {})) {
+        const sameBvid = item.bvid && normalizeBvid(record.bvid) === item.bvid;
+        const sameAid = item.aid && normalizeAid(record.aid) === item.aid;
+        if (record?.provider === "bilibili" && (sameBvid || sameAid) && !String(record.title || "").trim()) {
+          record.title = title;
+          record.updatedAt = Date.now();
+          changed = true;
+        }
+      }
+      if (changed) vcrIdStore.save();
+    } catch (error) {
+      console.warn(`[dashboard] failed to backfill title for ${item.bvid || `av${item.aid}`}: ${error.message || error}`);
+    }
+  }
+}
+
+function buildHistoryDashboard(requestUrl) {
+  const page = readPositiveInt(requestUrl?.searchParams?.get("historyPage"), 1);
+  const pageSize = readPositiveInt(requestUrl?.searchParams?.get("historyPageSize"), DASHBOARD_HISTORY_PAGE_SIZE);
+  const history = historyStore?.list({ page, pageSize }) || { page: 1, pageSize, total: 0, totalPages: 1, items: [] };
+  const cards = history.items.map((item) => renderHistoryCard(item)).join("");
+  return {
+    ...history,
+    cards,
+    summary: `<p class="subtle">&#20849; ${formatNumber(history.total)} &#26465;&#21382;&#21490;&#35760;&#24405;&#65292;&#31532; ${formatNumber(history.page)} / ${formatNumber(history.totalPages)} &#39029;&#12290;</p>`,
+    pagination: renderHistoryPagination(history)
+  };
+}
+
+function renderHistoryPagination(history) {
+  if (!history || history.totalPages <= 1) return "";
+  const pages = [];
+  const start = Math.max(1, history.page - 2);
+  const end = Math.min(history.totalPages, history.page + 2);
+  if (history.page > 1) pages.push(`<a class="page-link" href="/?historyPage=${history.page - 1}">&#19978;&#19968;&#39029;</a>`);
+  for (let page = start; page <= end; page++) {
+    pages.push(page === history.page
+      ? `<span class="page-link active">${formatNumber(page)}</span>`
+      : `<a class="page-link" href="/?historyPage=${page}">${formatNumber(page)}</a>`);
+  }
+  if (history.page < history.totalPages) pages.push(`<a class="page-link" href="/?historyPage=${history.page + 1}">&#19979;&#19968;&#39029;</a>`);
+  return `<nav class="pagination">${pages.join("")}</nav>`;
+}
+
+function renderHistoryCard(item) {
+  const providerLabel = item.provider === "netease" ? "网易云" : item.provider === "bilibili" ? "B 站" : item.provider || "-";
+  const typeLabel = historyTypeLabel(item);
+  const title = firstNonEmpty(item.title, item.bvid, item.songId, item.playlistId, item.key);
+  const eventSummary = Object.entries(item.events || {})
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 4)
+    .map(([name, count]) => `${historyEventLabel(name)} ${formatNumber(count)}`)
+    .join(" / ") || "-";
+  const link = historySourceLink(item);
+  return `
+          <article class="cache-card">
+            <p class="eyebrow">${escapeHtml(providerLabel)} · ${escapeHtml(typeLabel)}</p>
+            <h2>${escapeHtml(title)}</h2>
+            <dl class="grid">
+              <div><dt>&#26631;&#35782;</dt><dd>${escapeHtml(historyIdentity(item))}</dd></div>
+              <div><dt>&#35760;&#24405;&#27425;&#25968;</dt><dd>${formatNumber(item.seenCount)}</dd></div>
+              <div><dt>&#20107;&#20214;</dt><dd>${escapeHtml(eventSummary)}</dd></div>
+              <div><dt>vcrid ID</dt><dd>${formatNumber((item.vcrids || []).length)}</dd></div>
+              <div><dt>P / &#27468;&#26354;&#25968;</dt><dd>${formatNumber(item.pagesCount || 0)}</dd></div>
+              <div><dt>&#26368;&#36817;&#35760;&#24405;</dt><dd>${item.lastSeenAt ? `${escapeHtml(formatDuration(Math.floor((Date.now() - item.lastSeenAt) / 1000)))}&#21069;` : "-"}</dd></div>
+              <div><dt>&#39318;&#27425;&#35760;&#24405;</dt><dd>${item.firstSeenAt ? escapeHtml(formatDateTime(item.firstSeenAt)) : "-"}</dd></div>
+              <div><dt>&#38142;&#25509;</dt><dd>${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel(item))}</a>` : "-"}</dd></div>
+            </dl>
+          </article>`;
+}
+
+function historyTypeLabel(item) {
+  if (item.provider === "bilibili" && item.contentType === "video") return "视频";
+  if (item.provider === "bilibili" && item.contentType === "live") return "直播";
+  if (item.provider === "bilibili" && item.contentType === "list") return "列表/合集";
+  if (item.provider === "netease" && item.contentType === "playlist") return "歌单";
+  if (item.provider === "netease" && item.contentType === "song") return "单曲";
+  return item.contentType || "-";
+}
+
+function historyEventLabel(value) {
+  return ({
+    imported: "导入",
+    player_redirect: "播放",
+    player_manifest: "文本",
+    player_danmaku: "弹幕",
+    api_pages: "清单",
+    api_resolve: "解析",
+    api_danmaku: "弹幕",
+    vcrid_player: "vcrid播放",
+    vcrid_danmaku: "vcrid弹幕",
+    vcrid_resolve: "vcrid解析"
+  })[value] || value;
+}
+
+function historyIdentity(item) {
+  if (item.provider === "bilibili") return firstNonEmpty(item.bvid, item.aid ? `av${item.aid}` : "", item.key);
+  if (item.provider === "netease" && item.contentType === "playlist") return item.playlistId || item.key;
+  if (item.provider === "netease" && item.contentType === "song") return item.songId || item.key;
+  return item.key || "-";
+}
+
+function historySourceLink(item) {
+  if (item.normalizedUrl) return item.normalizedUrl;
+  if (item.sourceUrl && /^https?:\/\//i.test(item.sourceUrl)) return item.sourceUrl;
+  if (item.provider === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${item.bvid}/`;
+  if (item.provider === "bilibili" && item.aid) return `https://www.bilibili.com/video/av${item.aid}/`;
+  if (item.provider === "netease" && item.contentType === "playlist" && item.playlistId) return `https://music.163.com/playlist?id=${item.playlistId}`;
+  if (item.provider === "netease" && item.contentType === "song" && item.songId) return `https://music.163.com/song?id=${item.songId}`;
+  return "";
+}
+
+function linkLabel(item) {
+  if (item.provider === "bilibili") return firstNonEmpty(item.bvid, item.aid ? `av${item.aid}` : "", "打开");
+  if (item.provider === "netease" && item.contentType === "playlist") return `playlist ${item.playlistId || ""}`.trim();
+  if (item.provider === "netease" && item.contentType === "song") return `song ${item.songId || ""}`.trim();
+  return "打开";
+}
+
+function buildProviderHistoryDashboard(requestUrl) {
+  const rawProvider = String(requestUrl?.searchParams?.get("historyProvider") || "bilibili").toLowerCase();
+  const provider = rawProvider === "netease" ? "netease" : "bilibili";
+  const page = readPositiveInt(requestUrl?.searchParams?.get("historyPage"), 1);
+  const pageSize = readPositiveInt(requestUrl?.searchParams?.get("historyPageSize"), DASHBOARD_HISTORY_PAGE_SIZE);
+  const history = historyStore?.list({ page, pageSize, provider }) || { page: 1, pageSize, total: 0, totalPages: 1, items: [] };
+  const providerTitle = provider === "netease" ? "&#32593;&#26131;&#20113;&#38899;&#20048;" : "B &#31449;";
+  return {
+    ...history,
+    provider,
+    cards: history.items.map((item) => renderProviderHistoryCard(item)).join(""),
+    tabs: renderProviderHistoryTabs(provider),
+    summary: `<p class="subtle">${providerTitle} &#20849; ${formatNumber(history.total)} &#26465;&#21382;&#21490;&#35760;&#24405;&#65292;&#31532; ${formatNumber(history.page)} / ${formatNumber(history.totalPages)} &#39029;&#12290;</p>`,
+    pagination: renderProviderHistoryPagination(history, provider),
+    jumpForm: renderProviderHistoryJumpForm(history, provider)
+  };
+}
+
+function renderProviderHistoryTabs(provider) {
+  return `<nav class="tabs">
+    <a class="tab-link ${provider === "bilibili" ? "active" : ""}" href="/?historyProvider=bilibili">B &#31449;</a>
+    <a class="tab-link ${provider === "netease" ? "active" : ""}" href="/?historyProvider=netease">&#32593;&#26131;&#20113;&#38899;&#20048;</a>
+  </nav>`;
+}
+
+function providerHistoryPageHref(provider, page) {
+  return `/?historyProvider=${encodeURIComponent(provider)}&historyPage=${Math.max(1, Number(page || 1))}`;
+}
+
+function renderProviderHistoryPagination(history, provider) {
+  if (!history || history.totalPages <= 1) return "";
+  const links = [];
+  const start = Math.max(1, history.page - 2);
+  const end = Math.min(history.totalPages, history.page + 2);
+  if (history.page > 1) links.push(`<a class="page-link" href="${providerHistoryPageHref(provider, history.page - 1)}">&#19978;&#19968;&#39029;</a>`);
+  for (let page = start; page <= end; page++) {
+    links.push(page === history.page
+      ? `<span class="page-link active">${formatNumber(page)}</span>`
+      : `<a class="page-link" href="${providerHistoryPageHref(provider, page)}">${formatNumber(page)}</a>`);
+  }
+  if (history.page < history.totalPages) links.push(`<a class="page-link" href="${providerHistoryPageHref(provider, history.page + 1)}">&#19979;&#19968;&#39029;</a>`);
+  return `<nav class="pagination">${links.join("")}</nav>`;
+}
+
+function renderProviderHistoryJumpForm(history, provider) {
+  if (!history || history.totalPages <= 1) return "";
+  return `<form class="jump-form" method="get" action="/">
+    <input type="hidden" name="historyProvider" value="${escapeHtml(provider)}">
+    <label for="historyPageJump">&#36339;&#21040;</label>
+    <input id="historyPageJump" name="historyPage" type="number" min="1" max="${history.totalPages}" value="${history.page}">
+    <span>/ ${formatNumber(history.totalPages)} &#39029;</span>
+    <button type="submit">&#36339;&#36716;</button>
+  </form>`;
+}
+
+function renderProviderHistoryCard(item) {
+  const providerLabel = item.provider === "netease" ? "&#32593;&#26131;&#20113;" : item.provider === "bilibili" ? "B &#31449;" : escapeHtml(item.provider || "-");
+  const typeLabel = providerHistoryTypeLabel(item);
+  const title = firstNonEmpty(item.title, item.bvid, item.songId, item.playlistId, item.key);
+  const eventSummary = Object.entries(item.events || {})
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 4)
+    .map(([name, count]) => `${providerHistoryEventLabel(name)} ${formatNumber(count)}`)
+    .join(" / ") || "-";
+  const link = historySourceLink(item);
+  return `
+          <article class="cache-card">
+            <p class="eyebrow">${providerLabel} · ${typeLabel}</p>
+            <h2>${escapeHtml(title)}</h2>
+            <dl class="grid">
+              <div><dt>&#26631;&#35782;</dt><dd>${escapeHtml(historyIdentity(item))}</dd></div>
+              <div><dt>&#35760;&#24405;&#27425;&#25968;</dt><dd>${formatNumber(item.seenCount)}</dd></div>
+              <div><dt>&#20107;&#20214;</dt><dd>${eventSummary}</dd></div>
+              <div><dt>vcrid ID</dt><dd>${formatNumber((item.vcrids || []).length)}</dd></div>
+              <div><dt>P / &#27468;&#26354;&#25968;</dt><dd>${formatNumber(item.pagesCount || 0)}</dd></div>
+              <div><dt>&#26368;&#36817;&#35760;&#24405;</dt><dd>${item.lastSeenAt ? `${escapeHtml(formatDuration(Math.floor((Date.now() - item.lastSeenAt) / 1000)))}&#21069;` : "-"}</dd></div>
+              <div><dt>&#39318;&#27425;&#35760;&#24405;</dt><dd>${item.firstSeenAt ? escapeHtml(formatDateTime(item.firstSeenAt)) : "-"}</dd></div>
+              <div><dt>&#38142;&#25509;</dt><dd>${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel(item))}</a>` : "-"}</dd></div>
+            </dl>
+          </article>`;
+}
+
+function providerHistoryTypeLabel(item) {
+  if (item.provider === "bilibili" && item.contentType === "video") return "&#35270;&#39057;";
+  if (item.provider === "bilibili" && item.contentType === "live") return "&#30452;&#25773;";
+  if (item.provider === "bilibili" && item.contentType === "list") return "&#21015;&#34920;/&#21512;&#38598;";
+  if (item.provider === "netease" && item.contentType === "playlist") return "&#27468;&#21333;";
+  if (item.provider === "netease" && item.contentType === "song") return "&#21333;&#26354;";
+  return escapeHtml(item.contentType || "-");
+}
+
+function providerHistoryEventLabel(value) {
+  return ({
+    imported: "&#23548;&#20837;",
+    player_redirect: "&#25773;&#25918;",
+    player_manifest: "&#25991;&#26412;",
+    player_danmaku: "&#24377;&#24149;",
+    api_pages: "&#28165;&#21333;",
+    api_resolve: "&#35299;&#26512;",
+    api_danmaku: "&#24377;&#24149;",
+    vcrid_player: "vcrid&#25773;&#25918;",
+    vcrid_danmaku: "vcrid&#24377;&#24149;",
+    vcrid_resolve: "vcrid&#35299;&#26512;"
+  })[value] || escapeHtml(value);
+}
+
+function renderDashboard(requestUrl = null) {
   pruneAllExpiredCaches();
   const uptimeSeconds = Math.floor((Date.now() - stats.startedAt) / 1000);
   const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects - stats.liveRedirects);
-  const danmakuEntries = [...danmakuCache.entries()]
-    .sort((left, right) => right[1].time - left[1].time);
-  const hiddenDanmakuEntries = Math.max(0, danmakuEntries.length - DASHBOARD_DANMAKU_MAX_ENTRIES);
-  const cards = danmakuEntries.slice(0, DASHBOARD_DANMAKU_MAX_ENTRIES).map(([key, entry]) => {
-    const text = entry.value || "";
-    const expiresIn = Math.max(0, Math.floor((Number(entry.expiresAt || 0) - Date.now()) / 1000));
-    const lastAccessAge = Math.max(0, Math.floor((Date.now() - Number(entry.lastAccessAt || entry.time)) / 1000));
-    return `
-          <article class="cache-card">
-            <p class="eyebrow">&#24377;&#24149;&#32531;&#23384;</p>
-            <h2>${escapeHtml(headerValue(text, "title") || key)}</h2>
-            <dl class="grid">
-              <div><dt>BV</dt><dd>${escapeHtml(headerValue(text, "bvid") || "-")}</dd></div>
-              <div><dt>CID</dt><dd>${escapeHtml(headerValue(text, "cid") || "-")}</dd></div>
-              <div><dt>&#39029;&#30721;</dt><dd>${escapeHtml(headerValue(text, "page") || "1")}</dd></div>
-              <div><dt>&#24377;&#24149;&#25968;</dt><dd>${formatNumber(getDanmakuCount(text))}</dd></div>
-              <div><dt>&#21097;&#20313;</dt><dd>${escapeHtml(formatDuration(expiresIn))}</dd></div>
-              <div><dt>&#26368;&#36817;&#35775;&#38382;</dt><dd>${escapeHtml(formatDuration(lastAccessAge))}&#21069;</dd></div>
-            </dl>
-          </article>`;
-  }).join("");
-  const cacheSummary = hiddenDanmakuEntries > 0
-    ? `<p class="subtle">&#24050;&#38544;&#34255; ${formatNumber(hiddenDanmakuEntries)} &#26465;&#26356;&#26087;&#30340;&#24377;&#24149;&#32531;&#23384;&#65292;&#20027;&#39029;&#20165;&#26174;&#31034;&#26368;&#36817; ${formatNumber(DASHBOARD_DANMAKU_MAX_ENTRIES)} &#26465;&#12290;</p>`
-    : "";
-
+  const vcridCount = vcrIdStore ? Object.keys(vcrIdStore.data.records || {}).length : 0;
+  const vcridUsagePercent = vcrIdStore ? Math.round(vcrIdStore.usageRatio() * 10000) / 100 : 0;
+  const vcridFreeCount = Math.max(0, VCRID_MAX - vcridCount);
+  const vcridFreePercent = Math.max(0, Math.round((1 - (vcrIdStore ? vcrIdStore.usageRatio() : 0)) * 10000) / 100);
+  const lastGc = vcrIdStore?.lastGc || {};
+  const historyDashboard = buildProviderHistoryDashboard(requestUrl || new URL("http://localhost/"));
+  const historyTotal = Object.keys(historyStore?.data?.records || {}).length;
+  const bilibiliHistoryCount = Object.values(historyStore?.data?.records || {}).filter((record) => record.provider === "bilibili").length;
+  const neteaseHistoryCount = Object.values(historyStore?.data?.records || {}).filter((record) => record.provider === "netease").length;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2036,6 +4498,15 @@ function renderDashboard() {
     a:hover { text-decoration:underline; }
     .cache-list { display:grid; gap:14px; }
     .cache-card { padding:18px; background:#fbfcfd; }
+    .tabs { display:flex; flex-wrap:wrap; gap:10px; margin:0 0 14px; }
+    .tab-link { display:inline-flex; align-items:center; min-height:38px; padding:0 16px; border:1px solid var(--line); border-radius:8px; background:#fff; color:#20313d; font-weight:800; }
+    .tab-link.active { background:var(--green); border-color:var(--green); color:#fff; }
+    .pagination { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
+    .page-link { display:inline-flex; align-items:center; min-height:34px; padding:0 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:#20313d; font-weight:700; }
+    .page-link.active { background:var(--green); border-color:var(--green); color:#fff; }
+    .jump-form { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:14px 0 0; color:var(--muted); font-size:14px; }
+    .jump-form input[type="number"] { width:96px; min-height:34px; padding:0 10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:inherit; }
+    .jump-form button { min-height:34px; padding:0 14px; border:0; border-radius:8px; background:var(--green); color:#fff; font-weight:800; cursor:pointer; }
     .empty { padding:28px; border:1px dashed #b8c4cc; border-radius:8px; color:var(--muted); background:#fbfcfd; text-align:center; }
     @media (max-width:880px) { header { align-items:flex-start; flex-direction:column; } .brand-logo { width:60px; height:60px; } .stats,.grid { grid-template-columns:1fr; } h1 { font-size:28px; } }
   </style>
@@ -2057,6 +4528,12 @@ function renderDashboard() {
       <div class="stat"><span>B &#31449;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatCompactNumber(biliRedirects)}</strong><small>/player 302 durl</small></div>
       <div class="stat"><span>B &#31449;&#30452;&#25773;&#36339;&#36716;</span><strong>${formatCompactNumber(stats.liveRedirects)}</strong><small>/player 302 m3u8</small></div>
       <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
+      <div class="stat"><span>B &#31449;&#35270;&#39057;&#28165;&#21333;&#35299;&#26512;</span><strong>${formatNumber(stats.bilibiliPagesManifestRequests)}</strong><small>/api/pages bilibili</small></div>
+      <div class="stat"><span>&#32593;&#26131;&#20113;&#27468;&#21333;&#35299;&#26512;</span><strong>${formatNumber(stats.neteasePlaylistManifestRequests)}</strong><small>/api/pages netease-playlist</small></div>
+      <div class="stat"><span>&#21382;&#21490;&#35760;&#24405;</span><strong>${formatNumber(historyTotal)}</strong><small>B &#31449; / &#32593;&#26131;&#20113;&#32479;&#19968;&#35760;&#24405;</small></div>
+      <div class="stat"><span>B &#31449;&#35760;&#24405;</span><strong>${formatNumber(bilibiliHistoryCount)}</strong><small>&#35270;&#39057;&#12289;&#30452;&#25773;&#12289;&#21015;&#34920;</small></div>
+      <div class="stat"><span>&#32593;&#26131;&#20113;&#35760;&#24405;</span><strong>${formatNumber(neteaseHistoryCount)}</strong><small>&#21333;&#26354;&#21644;&#27468;&#21333;</small></div>
+      <div class="stat"><span>vcrid ID &#20351;&#29992;</span><strong>${formatNumber(vcridCount)}</strong><small>&#21097;&#20313; ${formatNumber(vcridFreeCount)} / ${vcridFreePercent}%</small></div>
       <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
       <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
       <div class="stat"><span>&#38480;&#27969;&#25318;&#25130;</span><strong>${formatCompactNumber(stats.rateLimited)}</strong><small>429 too many requests</small></div>
@@ -2075,8 +4552,14 @@ function renderDashboard() {
         <code>rate limit: /player ${RATE_LIMIT_PLAYER}/${Math.floor(RATE_LIMIT_WINDOW_MS / 1000)}s, cooldown ${Math.floor(RATE_LIMIT_COOLDOWN_MS / 1000)}s</code>
         <code>failure cache: ${failureCache.size}/${FAILURE_CACHE_MAX_ENTRIES}, ttl ${Math.floor(FAILURE_CACHE_TTL_MS / 1000)}s</code>
         <code>inflight: ${inflight.size}</code>
+        <code>vcrid store: ${vcridCount}/${VCRID_MAX}, ${vcridUsagePercent}%, ${vcrIdStore?.available ? "available" : "unavailable"}</code>
+        <code>vcrid gc: ${VCRID_GC_ENABLED ? "enabled" : "disabled"}, threshold ${Math.round(VCRID_GC_USAGE_THRESHOLD * 100)}%, target ${Math.round(VCRID_GC_TARGET_USAGE * 100)}%, idle ${VCRID_GC_MIN_UNUSED_DAYS}d</code>
+        <code>vcrid gc result: runs ${formatNumber(stats.vcridGcRuns)}, deleted ${formatNumber(stats.vcridGcDeleted)}, last ${escapeHtml(lastGc.reason || "none")}</code>
+        <code>history store: ${formatNumber(historyTotal)}, ${historyStore?.available ? "available" : "unavailable"}</code>
         <code>NetEase song/playlist: ${formatNumber(stats.neteaseSongRedirects)}/${formatNumber(stats.neteasePlaylistRedirects)}</code>
         <code>/api/resolve: ${stats.resolveRequests}</code>
+        <code>/api/pages: ${stats.apiPagesRequests}</code>
+        <code>/api/lyrics: ${stats.apiLyricsRequests}, cache ${neteaseLyricsCache.size}/${NETEASE_LYRICS_CACHE_MAX_ENTRIES}</code>
         <code>unsupported url rejected: ${stats.unsupportedUrlRejected}</code>
         <code>legacy rejected: ${stats.legacyRejected}</code>
       </div>
@@ -2086,9 +4569,12 @@ function renderDashboard() {
       <p class="subtle">&#24863;&#35874; <a href="https://music.znnu.com/" target="_blank" rel="noopener noreferrer">music.znnu.com</a> &#25552;&#20379;&#31532;&#19977;&#26041;&#35299;&#26512;&#26381;&#21153;&#12290;</p>
     </section>
     <section class="panel">
-      <h2>&#24377;&#24149;&#32531;&#23384;</h2>
-      ${cacheSummary}
-      <div class="cache-list">${cards || `<div class="empty">&#26242;&#26080;&#24377;&#24149;&#32531;&#23384;</div>`}</div>
+      <h2>&#35299;&#26512;&#21382;&#21490;&#35760;&#24405;</h2>
+      ${historyDashboard.tabs}
+      ${historyDashboard.summary}
+      <div class="cache-list">${historyDashboard.cards || `<div class="empty">&#26242;&#26080;&#35299;&#26512;&#21382;&#21490;&#35760;&#24405;</div>`}</div>
+      ${historyDashboard.pagination}
+      ${historyDashboard.jumpForm}
     </section>
     <section class="panel">
       <h2>&#25509;&#21475;</h2>
@@ -2163,6 +4649,8 @@ function rateLimitPolicy(pathname) {
   if (path === "/player") return { name: "player", limit: RATE_LIMIT_PLAYER };
   if (path === "/api/danmaku") return { name: "api-danmaku", limit: RATE_LIMIT_API_DANMAKU };
   if (path === "/api/resolve") return { name: "api-resolve", limit: RATE_LIMIT_API_RESOLVE };
+  if (path === "/api/pages") return { name: "api-pages", limit: RATE_LIMIT_API_PAGES };
+  if (path === "/api/lyrics") return { name: "api-lyrics", limit: RATE_LIMIT_API_LYRICS };
   if (path === "/api/cache/stats") return { name: "cache-stats", limit: RATE_LIMIT_CACHE_STATS };
   return { name: "general", limit: RATE_LIMIT_GENERAL };
 }
@@ -2180,6 +4668,16 @@ function getClientIp(req) {
 function firstHeaderValue(value) {
   const raw = Array.isArray(value) ? value[0] : value;
   return String(raw || "").split(",")[0].trim();
+}
+
+function getRequestOrigin(req, requestUrl) {
+  const forwardedProto = firstHeaderValue(req.headers["x-forwarded-proto"]);
+  const forwardedHost = firstHeaderValue(req.headers["x-forwarded-host"]);
+  const proto = /^https?$/i.test(forwardedProto)
+    ? forwardedProto.toLowerCase()
+    : String(requestUrl.protocol || "http:").replace(/:$/, "") || "http";
+  const host = forwardedHost || firstHeaderValue(req.headers.host) || requestUrl.host || `localhost:${PORT}`;
+  return `${proto}://${host}`;
 }
 
 function pruneRateLimitBuckets(now = Date.now()) {
@@ -2278,8 +4776,25 @@ function readPositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
+function parseVcridParam(requestUrl) {
+  if (!requestUrl.searchParams.has("vcrid")) return { present: false, ok: false, vcrid: 0 };
+  const raw = String(requestUrl.searchParams.get("vcrid") || "").trim();
+  if (!/^\d+$/.test(raw)) return { present: true, ok: false, vcrid: 0 };
+  const vcrid = Number.parseInt(raw, 10);
+  return {
+    present: true,
+    ok: vcrid >= VCRID_MIN && vcrid <= VCRID_MAX,
+    vcrid
+  };
+}
+
 function intEnv(name, fallback) {
   const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function numberEnv(name, fallback) {
+  const parsed = Number.parseFloat(process.env[name] || "");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 

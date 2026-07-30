@@ -1,6 +1,6 @@
 {
   "name": "paulkoi-danmaku-server",
-  "version": "1.0.3",
+  "version": "1.11",
   "private": true,
   "type": "module",
   "scripts": {

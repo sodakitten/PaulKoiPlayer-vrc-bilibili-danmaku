@@ -15,6 +15,7 @@ export default {
       if (url.pathname === "/api/cache/stats") return json(buildWorkerStats(env));
       if (url.pathname === "/api/danmaku") return await handleApiDanmaku(request, env, ctx, url);
       if (url.pathname === "/api/resolve") return await handleResolve(request, env, ctx, url);
+      if (url.pathname === "/api/pages") return await handlePages(request, env, ctx, url);
       if (url.pathname === "/player" || url.pathname === "/player/") return await handlePlayer(request, env, ctx, url);
       return text("not found\n", 404);
     } catch (error) {
@@ -104,6 +105,51 @@ async function handleResolve(_request, env, ctx, requestUrl) {
     title: view.title || "",
     videoUrlPreview: previewUrl(video.videoUrl)
   });
+}
+
+async function handlePages(request, env, ctx, requestUrl) {
+  const source = requestUrl.searchParams.get("url") || "";
+  if (!source) return json({ error: "missing url" }, 400, noStoreHeaders());
+  if (isBilibiliLikeSource(source)) return await proxyToDocker(request, env, requestUrl);
+
+  const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
+  const input = await parseInputUrl(source, env, ctx, forcedPage);
+  const cid = normalizeAid(requestUrl.searchParams.get("cid") || "");
+  if (cid) input.cid = cid;
+  if (!input.bvid && !input.aid) return json({ error: "missing bvid or aid", inputUrl: source }, 400, noStoreHeaders());
+
+  const view = await getVideoView(input, env, ctx);
+  const pages = Array.isArray(view.pages) ? view.pages : [];
+  if (!pages.length) return json({ error: "no pages", inputUrl: source }, 400, noStoreHeaders());
+
+  const selected = selectVideoPage(view, input);
+  const origin = new URL(request.url).origin;
+  const encodedSource = encodeURIComponent(source);
+  const pageItems = pages.map((pageItem, index) => {
+    const pageNumber = Number(pageItem.page || index + 1);
+    return {
+      page: pageNumber,
+      cid: Number(pageItem.cid || 0),
+      part: pageItem.part || "",
+      duration: Number(pageItem.duration || 0),
+      playUrl: `${origin}/player/?url=${encodedSource}&p=${pageNumber}`,
+      danmakuUrl: `${origin}/api/danmaku?url=${encodedSource}&p=${pageNumber}`,
+      resolveUrl: `${origin}/api/resolve?url=${encodedSource}&p=${pageNumber}`
+    };
+  });
+
+  return json({
+    type: "bilibili-pages",
+    inputUrl: source,
+    normalizedUrl: input.normalizedUrl,
+    bvid: view.bvid || input.bvid || "",
+    aid: view.aid || input.aid || 0,
+    title: view.title || "",
+    selectedPage: selected.page,
+    selectedCid: selected.cid,
+    totalPages: pages.length,
+    pages: pageItems
+  }, 200, noStoreHeaders());
 }
 
 async function parseInputUrl(rawValue, env, ctx, forcedPage = 0) {
