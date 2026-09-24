@@ -14,6 +14,8 @@ The current official stable YamaPlayer PC / desktop release is **1.11**, promote
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
+> **The frontend source on main is now the experimental `1.11-frontend-fix-alpha1.0`, not the stable package.** The [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) includes separate black-white and black-gold test ZIPs; its existing stable assets and tag are unchanged. These frontend-only fixes guard asynchronous callbacks and preserve existing settings when applying a skin. No backend upgrade is required. Unity/UdonSharp compilation and VRChat validation are still pending; see the [test package notes](docs/FRONTEND_FIX_ALPHA1.0.md).
+
 ## Required before use
 
 If your VRChat world was created with VCC, the project usually already includes the VRChat Worlds SDK and UdonSharp. In addition to those standard world dependencies, install the player required by the adapter you import:
@@ -55,6 +57,9 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 Current local and public package status:
 
+- [1.11-frontend-fix-alpha1.0.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0.zip): experimental black-white frontend source package.
+- [1.11-frontend-fix-alpha1.0-black-gold.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0-black-gold.zip): experimental black-gold frontend source package, retaining the released black-gold visuals with the same fixes.
+
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`: current official YamaPlayer PC / desktop source package and GitHub v1.11 Release asset, promoted unchanged from `alpha1.1`. It includes precise YamaPlayer 1.5.18 Top/Bottom URL Input lookup and sets the danmaku/lyrics root Canvas Order to `-1`, preventing competition with YamaPlayer's Order `0` gray interaction UI.
 - `alpha1.1.zip`: byte-identical promotion source for the official 1.11 package, retained for traceability.
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`: previous black-gold official package.
@@ -63,7 +68,7 @@ Current local and public package status:
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`: VizVid PC / desktop source package.
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`: dedicated YamaPlayer Android / Quest pickup tablet package.
 
-The server continues to use the v1.0.3 `server/` backend.
+The current backend is v1.11, with its deployment ZIP attached to the v1.11 Release. This frontend experiment changes neither backend code nor the protocol; no redeployment is needed.
 
 ### Android / Quest note
 

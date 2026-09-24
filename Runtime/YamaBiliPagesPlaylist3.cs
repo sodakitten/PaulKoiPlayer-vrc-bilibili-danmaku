@@ -90,6 +90,19 @@ namespace YamaBiliDanmakuV3
     private string _lastRequestUrl = "";
     private string _lastObservedPlaybackUrl = "";
     private float _requestStartedAt;
+    private bool _requestActive;
+    private int _requestEpoch;
+    private int _requestOwnerId = -1;
+    private string _requestPlaybackUrl = "";
+    private bool _requestFollowsSyncedManifest;
+    private string _requestManifestUrl = "";
+    private float _metadataRequestStartedAt = -1f;
+    private bool _downloadInFlight;
+    private string _downloadUrl = "";
+    private int _downloadEpoch;
+    private bool _downloadIsMetadata;
+    private VRCUrl _pendingDownloadUrl = VRCUrl.Empty;
+    private bool _pendingDownloadIsMetadata;
     private bool _isNeteasePlaylist;
     private bool _parsedShouldCycle;
     private bool _autoAdvancePending;
@@ -239,6 +252,7 @@ namespace YamaBiliDanmakuV3
 
     public void WatchPlaybackUrl()
     {
+      CancelInvalidPagesRequest();
       if (!_autoRefreshOnPlayback) return;
 
       if (_useUnifiedQueue && !_standaloneManifestMode)
@@ -362,6 +376,7 @@ namespace YamaBiliDanmakuV3
 
       if (_unifiedRequestMode != RequestModeNone || _loading) return;
       if (!Networking.IsOwner(_controller.gameObject)) return;
+      if (_controller.Stopped && !_controller.IsLoading) return;
       if (!IsVcridPlaybackUrl(request) && IsPagesRequestUrl(request) && request != _expandedPlaybackSourceUrl)
       {
         BeginUnifiedSourceRequest(playbackUrl, RequestModeExpandCurrent, false);
@@ -407,13 +422,19 @@ namespace YamaBiliDanmakuV3
     private void BeginPagesRequest(VRCUrl requestUrl)
     {
       string request = GetUrlString(requestUrl);
+      InvalidatePagesDownloads();
+      DiscardPreservedStandaloneManifest();
+      _unifiedRequestMode = RequestModeNone;
+      _unifiedRequestSourceUrl = VRCUrl.Empty;
+      _requestActive = true;
+      _requestFollowsSyncedManifest = _syncedManifestLoadPending;
+      _requestManifestUrl = request;
+      _requestPlaybackUrl = GetUrlString(GetCurrentControllerUrl());
       _loading = true;
       _lastRequestUrl = request;
       _lastObservedPlaybackUrl = request;
-      _requestStartedAt = Time.time;
       SetStatus("正在加载播放列表");
-      VRCStringDownloader.LoadUrl(requestUrl, (IUdonEventReceiver)this);
-      SendCustomEventDelayedSeconds(nameof(CheckPagesTimeout), 15f);
+      QueuePagesDownload(requestUrl, false);
     }
 
     public bool QueueInputUrl(VRCUrl inputUrl)
@@ -443,7 +464,12 @@ namespace YamaBiliDanmakuV3
         _normalizeQueueIndex = -1;
         _normalizeQueueTrackUrl = "";
       }
+      InvalidatePagesDownloads();
       ResetParsedSource();
+      _requestActive = true;
+      _requestFollowsSyncedManifest = false;
+      _requestPlaybackUrl = GetUrlString(GetCurrentControllerUrl());
+      _requestOwnerId = GetControllerOwnerId();
       _unifiedRequestMode = requestMode;
       _unifiedRequestSourceUrl = requestUrl;
       _unifiedStartWhenReady = startWhenReady;
@@ -451,15 +477,119 @@ namespace YamaBiliDanmakuV3
       _unifiedQueueLimitReached = false;
       _loading = true;
       _lastRequestUrl = GetUrlString(requestUrl);
-      _requestStartedAt = Time.time;
       SetStatus(requestMode == RequestModeEnqueue ? "正在解析队列链接" : "正在展开当前内容");
-      VRCStringDownloader.LoadUrl(requestUrl, (IUdonEventReceiver)this);
-      SendCustomEventDelayedSeconds(nameof(CheckPagesTimeout), 15f);
+      QueuePagesDownload(requestUrl, false);
+    }
+
+    private int GetControllerOwnerId()
+    {
+      if (!Utilities.IsValid(_controller)) return -1;
+      VRCPlayerApi owner = Networking.GetOwner(_controller.gameObject);
+      return Utilities.IsValid(owner) ? owner.playerId : -1;
+    }
+
+    private bool IsPagesRequestCurrent()
+    {
+      if (!_requestActive || !Utilities.IsValid(_controller)) return false;
+      if (_unifiedRequestMode == RequestModeEnqueue) return true;
+      if (_unifiedRequestMode == RequestModeExpandCurrent || _unifiedRequestMode == RequestModeNormalizeQueued)
+      {
+        if (!Networking.IsOwner(_controller.gameObject) || GetControllerOwnerId() != _requestOwnerId) return false;
+        if (_unifiedRequestMode == RequestModeNormalizeQueued)
+          return FindQueuedTrackIndex(_normalizeQueueIndex, _normalizeQueueTrackUrl) >= 0;
+        return (!_controller.Stopped || _controller.IsLoading) &&
+               GetUrlString(GetCurrentControllerUrl()) == _requestPlaybackUrl;
+      }
+      if (_requestFollowsSyncedManifest)
+        return _syncedManifestActive && GetUrlString(_syncedManifestUrl) == _requestManifestUrl;
+      return (!_controller.Stopped || _controller.IsLoading) &&
+             GetUrlString(GetCurrentControllerUrl()) == _requestPlaybackUrl;
+    }
+
+    private void CancelInvalidPagesRequest()
+    {
+      if (!_requestActive || IsPagesRequestCurrent()) return;
+      CancelUnifiedQueueRequest();
+    }
+
+    private void InvalidatePagesDownloads()
+    {
+      _requestEpoch++;
+      _requestActive = false;
+      _pendingDownloadUrl = VRCUrl.Empty;
+      _lastRequestUrl = "";
+      _pendingNeteaseMetadataUrl = "";
+      _pendingNeteaseMetadataIndex = -1;
+      _completeUnifiedRequestAfterMetadata = false;
+      _requestStartedAt = -1f;
+      _metadataRequestStartedAt = -1f;
+      // Do not release an SDK request here: a late response has only a URL,
+      // not our epoch. Drain it before issuing another request to that URL.
+    }
+
+    private void QueuePagesDownload(VRCUrl url, bool metadata)
+    {
+      _pendingDownloadUrl = url;
+      _pendingDownloadIsMetadata = metadata;
+      StartPendingPagesDownload();
+    }
+
+    private void StartPendingPagesDownload()
+    {
+      if (_downloadInFlight || VRCUrl.IsNullOrEmpty(_pendingDownloadUrl)) return;
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
+      VRCUrl url = _pendingDownloadUrl;
+      _pendingDownloadUrl = VRCUrl.Empty;
+      _downloadUrl = GetUrlString(url);
+      _downloadEpoch = _requestEpoch;
+      _downloadIsMetadata = _pendingDownloadIsMetadata;
+      _downloadInFlight = true;
+      if (_downloadIsMetadata)
+      {
+        _metadataRequestStartedAt = Time.time;
+        SendCustomEventDelayedSeconds(nameof(CheckUnifiedMetadataTimeout), 15f);
+      }
+      else
+      {
+        _requestStartedAt = Time.time;
+        SendCustomEventDelayedSeconds(nameof(CheckPagesTimeout), 15f);
+      }
+      VRCStringDownloader.LoadUrl(url, (IUdonEventReceiver)this);
+    }
+
+    private bool AcceptPagesDownload(VRCUrl url)
+    {
+      string value = GetUrlString(url);
+      if (!_downloadInFlight || value != _downloadUrl) return false;
+      _downloadInFlight = false;
+      _downloadUrl = "";
+      if (_downloadEpoch != _requestEpoch || !_requestActive)
+      {
+        StartPendingPagesDownload();
+        return false;
+      }
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return false;
+      }
+      return _downloadIsMetadata
+        ? value == _pendingNeteaseMetadataUrl
+        : _loading && value == _lastRequestUrl;
     }
 
     public void CheckPagesTimeout()
     {
-      if (!_loading) return;
+      if (!_loading || !_requestActive || _requestStartedAt < 0f) return;
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
       float remaining = 15f - (Time.time - _requestStartedAt);
       if (remaining > 0.1f)
       {
@@ -473,6 +603,7 @@ namespace YamaBiliDanmakuV3
         CompleteUnifiedRequestWithRawFallback("解析超时，已按单项加入");
         return;
       }
+      InvalidatePagesDownloads();
       SetStatus("加载超时");
     }
 
@@ -580,6 +711,7 @@ namespace YamaBiliDanmakuV3
 
     private void CancelUnifiedQueueRequest()
     {
+      InvalidatePagesDownloads();
       DiscardPreservedStandaloneManifest();
       _loading = false;
       _lastRequestUrl = "";
@@ -603,6 +735,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnQueueUpdated()
     {
+      CancelInvalidPagesRequest();
       if (!_useUnifiedQueue) return;
       if (_clearingUnifiedQueue) return;
       if (_standaloneManifestMode)
@@ -627,6 +760,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnTrackUpdated()
     {
+      CancelInvalidPagesRequest();
       if (!_useUnifiedQueue) return;
       if (_standaloneManifestMode)
       {
@@ -645,6 +779,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnUrlChanged()
     {
+      CancelInvalidPagesRequest();
       if (!_useUnifiedQueue) return;
       if (_standaloneManifestMode)
       {
@@ -660,6 +795,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnOwnerChanged()
     {
+      CancelInvalidPagesRequest();
       if (!_useUnifiedQueue) return;
       if (_standaloneManifestMode)
       {
@@ -742,6 +878,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnVideoStop()
     {
+      CancelInvalidPagesRequest();
       if (_biliMixedManifestMode && _currentPlaybackIsManifestItem && _naturalEndPending)
       {
         _naturalEndPending = false;
@@ -943,6 +1080,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnStringLoadSuccess(IVRCStringDownload result)
     {
+      if (!AcceptPagesDownload(result.Url)) return;
       string resultUrl = GetUrlString(result.Url);
       if (!string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) && resultUrl == _pendingNeteaseMetadataUrl)
       {
@@ -955,10 +1093,12 @@ namespace YamaBiliDanmakuV3
           _completeUnifiedRequestAfterMetadata = false;
           CompleteUnifiedRequest();
         }
+        else InvalidatePagesDownloads();
         return;
       }
 
       if (resultUrl != _lastRequestUrl) return;
+      _lastRequestUrl = "";
       if (_useUnifiedQueue && _unifiedRequestMode != RequestModeNone)
       {
         _loading = false;
@@ -986,6 +1126,7 @@ namespace YamaBiliDanmakuV3
       {
         _loading = false;
         _syncedManifestLoadPending = false;
+        InvalidatePagesDownloads();
         SetStatus("保持当前播放列表");
         return;
       }
@@ -996,6 +1137,7 @@ namespace YamaBiliDanmakuV3
       if (_useUnifiedQueue && _syncedManifestActive && _syncedManifestMode == ManifestModeBilibiliMixed)
       {
         ActivateSyncedBiliManifestFromParsed();
+        InvalidatePagesDownloads();
         return;
       }
       if (_syncedManifestActive && ApplyCurrentOrSyncedSelection())
@@ -1008,10 +1150,12 @@ namespace YamaBiliDanmakuV3
       }
       LoadSelectedNeteaseDanmaku();
       RequestSelectedNeteaseSongMetadata();
+      if (string.IsNullOrEmpty(_pendingNeteaseMetadataUrl)) InvalidatePagesDownloads();
     }
 
     public override void OnStringLoadError(IVRCStringDownload result)
     {
+      if (!AcceptPagesDownload(result.Url)) return;
       string resultUrl = GetUrlString(result.Url);
       if (!string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) && resultUrl == _pendingNeteaseMetadataUrl)
       {
@@ -1023,6 +1167,7 @@ namespace YamaBiliDanmakuV3
           CompleteUnifiedRequest();
           return;
         }
+        InvalidatePagesDownloads();
         SetStatus("歌曲信息读取失败 " + result.ErrorCode);
         return;
       }
@@ -1035,6 +1180,7 @@ namespace YamaBiliDanmakuV3
         CompleteUnifiedRequestWithRawFallback("解析失败，已按单项加入");
         return;
       }
+      InvalidatePagesDownloads();
       SetStatus("列表加载失败 " + result.ErrorCode);
     }
 
@@ -1207,11 +1353,17 @@ namespace YamaBiliDanmakuV3
 
     private void CompleteUnifiedRequest()
     {
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
       int requestMode = _unifiedRequestMode;
       VRCUrl sourceUrl = _unifiedRequestSourceUrl;
       bool startWhenReady = _unifiedStartWhenReady;
       int normalizeQueueIndex = _normalizeQueueIndex;
       string normalizeQueueTrackUrl = _normalizeQueueTrackUrl;
+      InvalidatePagesDownloads();
       _unifiedRequestMode = RequestModeNone;
       _unifiedRequestSourceUrl = VRCUrl.Empty;
       _unifiedStartWhenReady = false;
@@ -1731,11 +1883,17 @@ namespace YamaBiliDanmakuV3
 
     private void CompleteUnifiedRequestWithRawFallback(string status)
     {
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
       int requestMode = _unifiedRequestMode;
       VRCUrl sourceUrl = _unifiedRequestSourceUrl;
       bool startWhenReady = _unifiedStartWhenReady;
       int normalizeQueueIndex = _normalizeQueueIndex;
       string normalizeQueueTrackUrl = _normalizeQueueTrackUrl;
+      InvalidatePagesDownloads();
       _unifiedRequestMode = RequestModeNone;
       _unifiedRequestSourceUrl = VRCUrl.Empty;
       _unifiedStartWhenReady = false;
@@ -3688,6 +3846,7 @@ namespace YamaBiliDanmakuV3
 
     private void ClearPages(string status)
     {
+      if (_requestActive) CancelUnifiedQueueRequest();
       _parts = new string[0];
       _playUrls = new string[0];
       _danmakuUrls = new string[0];
@@ -4034,6 +4193,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnDeserialization()
     {
+      CancelInvalidPagesRequest();
       if (_useUnifiedQueue && (_syncedManifestActive || _standaloneManifestMode || _biliMixedManifestMode))
       {
         if (_syncedManifestActive)
@@ -4070,6 +4230,7 @@ namespace YamaBiliDanmakuV3
 
     public void ApplySyncedManifestState()
     {
+      CancelInvalidPagesRequest();
       if (!_syncedManifestActive)
       {
         if (_useUnifiedQueue) ApplySyncedManifestModeFlags();
@@ -4079,6 +4240,10 @@ namespace YamaBiliDanmakuV3
       }
 
       if (_useUnifiedQueue) ApplySyncedManifestModeFlags();
+
+      // Selection-only sync updates must not restart the same manifest download.
+      if (_requestActive && _requestFollowsSyncedManifest && _loading &&
+          GetUrlString(_syncedManifestUrl) == _lastRequestUrl) return;
 
       if (_useUnifiedQueue && _syncedManifestMode == ManifestModeBilibiliMixed)
       {
@@ -4162,20 +4327,35 @@ namespace YamaBiliDanmakuV3
 
       _pendingNeteaseMetadataUrl = requestUrl;
       _pendingNeteaseMetadataIndex = metadataIndex;
-      VRCStringDownloader.LoadUrl(metadataUrl, (IUdonEventReceiver)this);
-      if (_useUnifiedQueue && _completeUnifiedRequestAfterMetadata)
-      {
-        SendCustomEventDelayedSeconds(nameof(CheckUnifiedMetadataTimeout), 15f);
-      }
+      QueuePagesDownload(metadataUrl, true);
     }
 
     public void CheckUnifiedMetadataTimeout()
     {
-      if (!_useUnifiedQueue || !_completeUnifiedRequestAfterMetadata || string.IsNullOrEmpty(_pendingNeteaseMetadataUrl)) return;
+      if (!_requestActive || string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) || _metadataRequestStartedAt < 0f) return;
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
+      float remaining = 15f - (Time.time - _metadataRequestStartedAt);
+      if (remaining > 0.1f)
+      {
+        SendCustomEventDelayedSeconds(nameof(CheckUnifiedMetadataTimeout), remaining);
+        return;
+      }
       _pendingNeteaseMetadataUrl = "";
       _pendingNeteaseMetadataIndex = -1;
-      _completeUnifiedRequestAfterMetadata = false;
-      CompleteUnifiedRequest();
+      if (_useUnifiedQueue && _completeUnifiedRequestAfterMetadata)
+      {
+        _completeUnifiedRequestAfterMetadata = false;
+        CompleteUnifiedRequest();
+      }
+      else
+      {
+        InvalidatePagesDownloads();
+        SetStatus("歌曲信息读取超时");
+      }
     }
 
     private void ApplyNeteaseSongMetadata(string raw, int index)

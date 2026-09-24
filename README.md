@@ -14,6 +14,8 @@ YamaPlayer PC / 桌面端当前正式稳定版为 **1.11**，由 `alpha1.1` 原�
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
+> **当前 main 前端源码是 `1.11-frontend-fix-alpha1.0` 测试版，不是正式稳定包。** [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) 新增普通黑白和黑金两个测试 ZIP；原正式附件与标签保留不变。本测试仅处理异步回调安全和应用皮肤时的配置保留，后端无需升级。尚未通过 Unity/UdonSharp 编译和 VRChat 实机验收，详见[测试版说明](docs/FRONTEND_FIX_ALPHA1.0.md)。
+
 ## 使用前需要安装
 
 如果你是用 VCC 创建的 VRChat World 项目，项目里通常已经包含 VRChat Worlds SDK 和 UdonSharp。除此之外，需要安装你实际使用的播放器：
@@ -55,6 +57,9 @@ https://danmaku.paulkoishi.com/player/?url=
 
 当前本地包与公开包状态：
 
+- [1.11-frontend-fix-alpha1.0.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0.zip)：普通黑白前端测试源码包。
+- [1.11-frontend-fix-alpha1.0-black-gold.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0-black-gold.zip)：黑金前端测试源码包；保留正式黑金视觉，与普通测试包使用同一组修复。
+
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`：当前 YamaPlayer PC / 桌面端正式源码包及 GitHub v1.11 Release 资产，由 `alpha1.1` 原样晋升；包含 YamaPlayer 1.5.18 Top/Bottom URL Input 精确自动定位，并将弹幕/歌词根 Canvas Order 设为 `-1`，避免与 YamaPlayer 点击后出现的 Order `0` 灰色交互 UI 同级竞争。
 - `alpha1.1.zip`：正式 1.11 的逐字节晋升来源包，继续保留用于追溯。
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`：上一版金黑 UI 正式包。
@@ -63,7 +68,7 @@ https://danmaku.paulkoishi.com/player/?url=
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`：VizVid PC / 桌面端源码包。
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`：YamaPlayer Android / Quest 可拾取平板专用包。
 
-服务端继续使用 v1.0.3 对应的 `server/`。
+服务端当前为 v1.11，部署包在 v1.11 Release 中；本次前端测试没有修改后端或协议，无需重新部署。
 
 ### Android / Quest 使用说明
 

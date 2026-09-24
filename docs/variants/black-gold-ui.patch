@@ -1,0 +1,106 @@
+diff --git a/Editor/YamaBiliDanmakuRigBuilder3.cs b/Editor/YamaBiliDanmakuRigBuilder3.cs
+index 36e4d44..8c8113b 100644
+--- a/Editor/YamaBiliDanmakuRigBuilder3.cs
++++ b/Editor/YamaBiliDanmakuRigBuilder3.cs
+@@ -59,7 +59,7 @@ namespace YamaBiliDanmakuV3.Editor
+     private const float PagesHeaderGap = 14f;
+     private const float PagesHeaderContentWidth = PagesPanelWidth - 24f - PagesHeaderActionWidth - PagesHeaderRightPadding - PagesHeaderGap;
+     private const string RoundedSpriteGuid = "cb6af20af8ed3f6438490dcef842bdde";
+-    private const float PanelSpritePixelsPerUnitMultiplier = 1f;
++    private const float PanelSpritePixelsPerUnitMultiplier = 2f;
+     private const string DisplayAreaIconGuid = "23aa86979de8cf94db763545b72e0c9b";
+     private const string DanmakuIconGuid = "49e3e4d5882a85e4d8416c06d008c51f";
+     private const string UrlFillIconGuid = "ab97ea5771096a348a20dec1cac271dd";
+@@ -77,15 +77,15 @@ namespace YamaBiliDanmakuV3.Editor
+     private const float DefaultUnderlaySoftness = 0.03f;
+     private const string RequiredUiCharacters = "播放列表队首页顺序单项循环上一下弹幕区域全屏半四分之显示开关输入链接填充等待正在加载解析删除保留终止第共视频已返回暂无持当前内容没有条展超时按未找到器控制切换为即将失败识别歌曲信息读取空目网易云后续最多所选效缺少地址录不存限变化请重试从同步清中名命可用的该称并稍候经0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-/:：·，。！？（）()[]<>｜ ";
+
+-    private static readonly Color UiAccentColor = new Color(1f, 1f, 1f, 1f);
+-    private static readonly Color UiTextColor = new Color(1f, 1f, 1f, 1f);
+-    private static readonly Color UiMutedTextColor = new Color(1f, 1f, 1f, 1f);
+-    private static readonly Color UiButtonColor = new Color(1f, 1f, 1f, 0.07f);
+-    private static readonly Color UiDividerColor = new Color(1f, 1f, 1f, 0.24f);
+-    private static readonly Color UiPanelColor = new Color(0f, 0f, 0f, 0.985f);
+-    private static readonly Color UiNavigationColor = new Color(0f, 0f, 0f, 0.97f);
+-    private static readonly Color UiHighlightedColor = new Color(1f, 1f, 1f, 1f);
+-    private static readonly Color UiPressedColor = new Color(0.58f, 0.58f, 0.58f, 1f);
++    private static readonly Color UiAccentColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f);
++    private static readonly Color UiTextColor = new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
++    private static readonly Color UiMutedTextColor = new Color(200f / 255f, 180f / 255f, 154f / 255f, 0.76f);
++    private static readonly Color UiButtonColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.07f);
++    private static readonly Color UiDividerColor = new Color(200f / 255f, 168f / 255f, 128f / 255f, 0.28f);
++    private static readonly Color UiPanelColor = new Color(0.012f, 0.011f, 0.016f, 0.985f);
++    private static readonly Color UiNavigationColor = new Color(0.015f, 0.014f, 0.02f, 0.94f);
++    private static readonly Color UiHighlightedColor = new Color(1f, 0.9f, 0.74f, 1f);
++    private static readonly Color UiPressedColor = new Color(0.82f, 0.68f, 0.52f, 1f);
+
+     [MenuItem("Yamadev/YamaPlayer/Create Bili Danmaku Module", false, 2000)]
+     public static void CreateRig()
+@@ -238,7 +238,7 @@ namespace YamaBiliDanmakuV3.Editor
+       status.raycastTarget = false;
+       status.alignment = TextAlignmentOptions.Left;
+       status.fontSize = 22f;
+-      status.color = new Color(1f, 1f, 1f, 1f);
++      status.color = new Color(1f, 1f, 1f, 0.75f);
+       status.text = "idle";
+       statusObject.SetActive(false);
+
+@@ -1522,7 +1522,7 @@ namespace YamaBiliDanmakuV3.Editor
+       ApplyChineseUiFont(selected);
+       EditorUtility.SetDirty(selected);
+       SceneView.RepaintAll();
+-      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Black-white UI skin applied. Exact YamaPlayer 1.5.18 URL Input references were repaired when found.", "OK");
++      EditorUtility.DisplayDialog("Yama Bili Danmaku", "Black-gold UI skin applied. Exact YamaPlayer 1.5.18 URL Input references were repaired when found.", "OK");
+     }
+
+     private static void ApplyDanmakuCanvasSortingOrder(GameObject root)
+diff --git a/Runtime/YamaBiliPagesPlaylist3.cs b/Runtime/YamaBiliPagesPlaylist3.cs
+index 4764b02..40b42d7 100644
+--- a/Runtime/YamaBiliPagesPlaylist3.cs
++++ b/Runtime/YamaBiliPagesPlaylist3.cs
+@@ -2994,7 +2994,9 @@ namespace YamaBiliDanmakuV3
+         label.text = (current ? "> " : "") + (sourceType == DisplaySourceManifest
+           ? FormatBiliManifestLabel(sourceIndex)
+           : FormatUnifiedTrackLabel(displayIndex, displayTrack));
+-        SetPageButtonVisual(label, current);
++        label.color = current
++          ? new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f)
++          : new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+       }
+
+       if (itemCount <= 0)
+@@ -3761,30 +3763,18 @@ namespace YamaBiliDanmakuV3
+           Track queueTrack = GetStandaloneQueueTrack(queueIndex);
+           _visibleDeleteUrls[i] = GetTrackVrcUrl(queueTrack);
+           label.text = FormatStandaloneQueueTrackLabel(index, queueTrack);
+-          SetPageButtonVisual(label, false);
++          label.color = new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+           continue;
+         }
+
+         bool current = _selectedIndex == index;
+         label.text = (current ? "> " : "") + FormatPageLabel(index);
+-        SetPageButtonVisual(label, current);
++        label.color = current
++          ? new Color(200f / 255f, 168f / 255f, 128f / 255f, 1f)
++          : new Color(222f / 255f, 207f / 255f, 185f / 255f, 0.96f);
+       }
+     }
+
+-    private void SetPageButtonVisual(TextMeshProUGUI label, bool current)
+-    {
+-      if (!Utilities.IsValid(label)) return;
+-      label.color = new Color(1f, 1f, 1f, 1f);
+-
+-      Transform buttonTransform = label.transform.parent;
+-      if (!Utilities.IsValid(buttonTransform)) return;
+-      Image background = buttonTransform.GetComponent<Image>();
+-      if (!Utilities.IsValid(background)) return;
+-      background.color = current
+-        ? new Color(1f, 1f, 1f, 0.14f)
+-        : new Color(1f, 1f, 1f, 0.07f);
+-    }
+-
+     private int GetStandaloneQueueCount()
+     {
+       if (!Utilities.IsValid(_controller) || !Utilities.IsValid(_controller.Queue)) return 0;

@@ -307,6 +307,7 @@ namespace YamaBiliDanmakuV3.Editor
           UnityEngine.Object.DestroyImmediate(helperObject);
           return null;
         }
+        InitializeNewUrlPrefixHelper(helper);
       }
 
       WireUrlPrefixHelper(helper, controller, urlPrefixToggleButtonLabel);
@@ -426,6 +427,7 @@ namespace YamaBiliDanmakuV3.Editor
       if (playlist == null)
       {
         playlist = AddUdonSharpComponentForType(panelObject, playlistType);
+        InitializeNewPagesPlaylist(playlist);
       }
 
       if (playlist == null)
@@ -1656,14 +1658,6 @@ namespace YamaBiliDanmakuV3.Editor
       SerializedProperty queueInputIdleLabelProperty = serialized.FindProperty("_queueInputIdleLabel");
       if (queueInputIdleLabelProperty != null) queueInputIdleLabelProperty.objectReferenceValue = queueInputIdleLabel;
 
-      SerializedProperty prefixProperty = serialized.FindProperty("_urlPrefix");
-      SetVRCUrl(prefixProperty, DefaultUrlPrefix);
-
-      SetBool(serialized, "_enableUrlPrefixOnInput", true);
-      SetBool(serialized, "_keepPrefixWhenEmpty", false);
-      SetFloat(serialized, "_refreshSeconds", 3f);
-      SetFloat(serialized, "_inputWatchSeconds", 0.25f);
-
       serialized.ApplyModifiedPropertiesWithoutUndo();
 
       AddPrefixInputEventTriggers(topInput, helper, "ApplyPrefixToTopInput");
@@ -1925,8 +1919,6 @@ namespace YamaBiliDanmakuV3.Editor
       SerializedProperty labelProperty = serialized.FindProperty("_urlPrefixToggleButtonLabel");
       if (labelProperty != null) labelProperty.objectReferenceValue = urlPrefixToggleButtonLabel;
 
-      SetBool(serialized, "_urlPrefixFillEnabled", true);
-
       serialized.ApplyModifiedPropertiesWithoutUndo();
       AddModuleButtonClick(urlPrefixToggleButton, module, "ToggleUrlPrefixBackfill");
     }
@@ -1971,6 +1963,38 @@ namespace YamaBiliDanmakuV3.Editor
       WirePagesPlaylistReferences(playlist, controller, module, titleLabel, titleRect, titleViewportRect, statusLabel, playModeLabel, pageLabels, deleteIcons);
     }
 
+    // Skin/reference repair must not reset a world's backend or playback settings.
+    // Apply installation defaults only to components created by this builder.
+    private static void InitializeNewUrlPrefixHelper(Component helper)
+    {
+      if (helper == null) return;
+      SerializedObject serialized = new SerializedObject(helper);
+      SetVRCUrl(serialized.FindProperty("_urlPrefix"), DefaultUrlPrefix);
+      SetBool(serialized, "_enableUrlPrefixOnInput", true);
+      SetBool(serialized, "_keepPrefixWhenEmpty", false);
+      SetFloat(serialized, "_refreshSeconds", 3f);
+      SetFloat(serialized, "_inputWatchSeconds", 0.25f);
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static void InitializeNewPagesPlaylist(Component playlist)
+    {
+      if (playlist == null) return;
+      SerializedObject serialized = new SerializedObject(playlist);
+      SetVRCUrl(serialized.FindProperty("_pagesApiPrefix"), DefaultPagesApiPrefix);
+      SetBool(serialized, "_autoRefreshOnPlayback", true);
+      SetBool(serialized, "_autoPlayNext", true);
+      SetBool(serialized, "_useUnifiedQueue", true);
+      SetFloat(serialized, "_playbackWatchSeconds", 0.5f);
+      SetFloat(serialized, "_marqueePixelsPerSecond", 28f);
+      SetFloat(serialized, "_marqueeTickSeconds", 0.08f);
+      SetFloat(serialized, "_marqueePauseSeconds", 1.2f);
+      SerializedProperty vcridPrefixProperty = serialized.FindProperty("_vcridUrlPrefix");
+      if (vcridPrefixProperty != null) vcridPrefixProperty.stringValue = DefaultVcridUrlPrefix;
+      SetInt(serialized, "_vcridMax", DefaultVcridMax);
+      serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
     private static void WirePagesPlaylistReferences(Component playlist, Controller controller, Component module, TextMeshProUGUI titleLabel, RectTransform titleRect, RectTransform titleViewportRect, TextMeshProUGUI statusLabel, TextMeshProUGUI playModeLabel, TextMeshProUGUI[] pageLabels, Image[] deleteIcons)
     {
       if (playlist == null) return;
@@ -1988,19 +2012,6 @@ namespace YamaBiliDanmakuV3.Editor
       {
         if (helper != null) helperProperty.objectReferenceValue = helper;
       }
-
-      SerializedProperty prefixProperty = serialized.FindProperty("_pagesApiPrefix");
-      SetVRCUrl(prefixProperty, DefaultPagesApiPrefix);
-      SetBool(serialized, "_autoRefreshOnPlayback", true);
-      SetBool(serialized, "_autoPlayNext", true);
-      SetBool(serialized, "_useUnifiedQueue", true);
-      SetFloat(serialized, "_playbackWatchSeconds", 0.5f);
-      SetFloat(serialized, "_marqueePixelsPerSecond", 28f);
-      SetFloat(serialized, "_marqueeTickSeconds", 0.08f);
-      SetFloat(serialized, "_marqueePauseSeconds", 1.2f);
-      SerializedProperty vcridPrefixProperty = serialized.FindProperty("_vcridUrlPrefix");
-      if (vcridPrefixProperty != null) vcridPrefixProperty.stringValue = DefaultVcridUrlPrefix;
-      SetInt(serialized, "_vcridMax", DefaultVcridMax);
 
       SerializedProperty titleProperty = serialized.FindProperty("_titleLabel");
       if (titleProperty != null) titleProperty.objectReferenceValue = titleLabel;

@@ -71,6 +71,16 @@ namespace YamaBiliDanmakuV3
     private bool _lastLoadWasCurrentUrl;
     private bool _triedFallbackAfterCurrentUrl;
 
+    // Keep one SDK download in flight. A cancelled request must drain before a
+    // new request (including the same URL) can be mistaken for its response.
+    private int _requestEpoch;
+    private int _downloadEpoch;
+    private bool _downloadInFlight;
+    private string _downloadUrl = "";
+    private VRCUrl _pendingDownloadUrl = VRCUrl.Empty;
+    private string _requestPlaybackUrl = "";
+    private bool _requestAudioMode;
+
     private bool[] _poolActive = new bool[0];
     private RectTransform[] _poolRects = new RectTransform[0];
     private float[] _activeStartTime = new float[0];
@@ -104,15 +114,20 @@ namespace YamaBiliDanmakuV3
       UpdateStatusVisibility();
       if (!Utilities.IsValid(_controller)) return;
 
+      if (_requestedForPlayback && _requestPlaybackUrl != GetUrlString(GetCurrentYamaPlayerUrl()))
+        ResetDanmaku();
+
       if (_controller.Stopped)
       {
-        if (_loaded || _lineCount > 0 || _requestedForPlayback) ResetDanmaku();
+        if (!_controller.IsLoading && (_loaded || _lineCount > 0 || _requestedForPlayback)) ResetDanmaku();
         return;
       }
 
       if (!_requestedForPlayback && !_externalAudioMode)
       {
         _requestedForPlayback = true;
+        _requestPlaybackUrl = GetUrlString(GetCurrentYamaPlayerUrl());
+        _requestAudioMode = _externalAudioMode;
         LoadCurrentTrackDanmaku();
       }
 
@@ -173,7 +188,7 @@ namespace YamaBiliDanmakuV3
       _lastLoadWasCurrentUrl = true;
       _triedFallbackAfterCurrentUrl = false;
       SetStatus("loading current url");
-      VRCStringDownloader.LoadUrl(currentUrl, (IUdonEventReceiver)this);
+      BeginDanmakuDownload(currentUrl);
     }
 
     public void LoadFallbackDanmaku()
@@ -186,7 +201,7 @@ namespace YamaBiliDanmakuV3
 
       _lastLoadWasCurrentUrl = false;
       SetStatus("loading fallback");
-      VRCStringDownloader.LoadUrl(_fallbackDanmakuUrl, (IUdonEventReceiver)this);
+      BeginDanmakuDownload(_fallbackDanmakuUrl);
     }
 
     public void LoadDanmakuUrl(VRCUrl danmakuUrl)
@@ -202,7 +217,7 @@ namespace YamaBiliDanmakuV3
       _triedFallbackAfterCurrentUrl = false;
       _requestedForPlayback = true;
       SetStatus("loading selected p");
-      VRCStringDownloader.LoadUrl(danmakuUrl, (IUdonEventReceiver)this);
+      BeginDanmakuDownload(danmakuUrl);
     }
 
     public void ClearDanmaku()
@@ -305,6 +320,7 @@ namespace YamaBiliDanmakuV3
 
     public override void OnStringLoadSuccess(IVRCStringDownload result)
     {
+      if (!AcceptDanmakuDownload(result.Url)) return;
       string body = ExtractDanmakuBlock(result.Result);
       if (string.IsNullOrEmpty(body))
       {
@@ -318,8 +334,66 @@ namespace YamaBiliDanmakuV3
 
     public override void OnStringLoadError(IVRCStringDownload result)
     {
+      if (!AcceptDanmakuDownload(result.Url)) return;
       if (TryLoadFallbackAfterCurrentUrl("load error " + result.ErrorCode)) return;
       SetStatus("load error " + result.ErrorCode);
+    }
+
+    private string GetUrlString(VRCUrl url)
+    {
+      return VRCUrl.IsNullOrEmpty(url) ? "" : url.Get();
+    }
+
+    private void BeginDanmakuDownload(VRCUrl url)
+    {
+      _requestEpoch++;
+      _requestPlaybackUrl = GetUrlString(GetCurrentYamaPlayerUrl());
+      _requestAudioMode = _externalAudioMode;
+      _requestedForPlayback = true;
+      _pendingDownloadUrl = url;
+      StartPendingDanmakuDownload();
+    }
+
+    private bool IsDanmakuRequestCurrent()
+    {
+      if (!_requestedForPlayback || _requestAudioMode != _externalAudioMode) return false;
+      if (!Utilities.IsValid(_controller)) return true;
+      return (!_controller.Stopped || _controller.IsLoading) &&
+             _requestPlaybackUrl == GetUrlString(GetCurrentYamaPlayerUrl());
+    }
+
+    private void StartPendingDanmakuDownload()
+    {
+      if (_downloadInFlight || VRCUrl.IsNullOrEmpty(_pendingDownloadUrl)) return;
+      if (!IsDanmakuRequestCurrent())
+      {
+        ResetDanmaku();
+        return;
+      }
+      VRCUrl url = _pendingDownloadUrl;
+      _pendingDownloadUrl = VRCUrl.Empty;
+      _downloadUrl = GetUrlString(url);
+      _downloadEpoch = _requestEpoch;
+      _downloadInFlight = true;
+      VRCStringDownloader.LoadUrl(url, (IUdonEventReceiver)this);
+    }
+
+    private bool AcceptDanmakuDownload(VRCUrl url)
+    {
+      if (!_downloadInFlight || GetUrlString(url) != _downloadUrl) return false;
+      _downloadInFlight = false;
+      _downloadUrl = "";
+      if (_downloadEpoch != _requestEpoch)
+      {
+        StartPendingDanmakuDownload();
+        return false;
+      }
+      if (!IsDanmakuRequestCurrent())
+      {
+        ResetDanmaku();
+        return false;
+      }
+      return true;
     }
 
     private bool TryLoadFallbackAfterCurrentUrl(string reason)
@@ -358,6 +432,9 @@ namespace YamaBiliDanmakuV3
 
     private void ResetDanmaku()
     {
+      _requestEpoch++;
+      _pendingDownloadUrl = VRCUrl.Empty;
+      _requestPlaybackUrl = "";
       _loaded = false;
       _lineCount = 0;
       _nextLine = 0;
@@ -374,6 +451,14 @@ namespace YamaBiliDanmakuV3
     private VRCUrl GetCurrentYamaPlayerUrl()
     {
       if (!Utilities.IsValid(_controller)) return VRCUrl.Empty;
+
+      // In 1.5.18 Track is updated before the synchronized _url is serialized.
+      Track track = _controller.Track;
+      if (track.IsValid())
+      {
+        VRCUrl trackUrl = track.GetVRCUrl();
+        if (!VRCUrl.IsNullOrEmpty(trackUrl)) return trackUrl;
+      }
 
       object currentUrl = _controller.GetProgramVariable("_url");
       if (!Utilities.IsValid(currentUrl)) return VRCUrl.Empty;
