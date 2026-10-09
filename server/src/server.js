@@ -1,10 +1,20 @@
 import http from "node:http";
-import { createDecipheriv, createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { URL } from "node:url";
+import { createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, URL } from "node:url";
+import {
+  parseUploadedDanmaku,
+  validateCustomId,
+  validateVideoUrl,
+  formatYbdmDanmaku,
+  updateYbdmHeader
+} from "./custom-danmaku.js";
+import { renderAdminPage } from "./admin-page.js";
 
-const PORT = intEnv("PORT", 3000);
+const PORT = (process.env.PORT !== undefined && process.env.PORT !== "" && Number.isFinite(parseInt(process.env.PORT, 10)) && parseInt(process.env.PORT, 10) >= 0)
+  ? parseInt(process.env.PORT, 10)
+  : 3000;
 const VIEW_CACHE_TTL_MS = intEnv("VIEW_CACHE_TTL_SECONDS", 1800) * 1000;
 const VIDEO_URL_CACHE_TTL_MS = intEnv("VIDEO_URL_CACHE_TTL_SECONDS", 600) * 1000;
 const DANMAKU_CACHE_TTL_MS = intEnv("DANMAKU_CACHE_TTL_SECONDS", 21600) * 1000;
@@ -54,6 +64,10 @@ const HISTORY_STORE_FILE = process.env.HISTORY_STORE_FILE || "/app/data/history-
 const DASHBOARD_HISTORY_PAGE_SIZE = intEnv("DASHBOARD_HISTORY_PAGE_SIZE", 20);
 const STATS_FILE = process.env.STATS_FILE || "/app/data/stats.json";
 const STATS_SAVE_INTERVAL_MS = intEnv("STATS_SAVE_INTERVAL_SECONDS", 30) * 1000;
+const CUSTOM_STORE_FILE = process.env.CUSTOM_STORE_FILE || "/app/data/custom-store.json";
+const CUSTOM_DANMAKU_DIR = process.env.CUSTOM_DANMAKU_DIR || "/app/data/custom-danmaku";
+const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || process.env.CUSTOM_DANMAKU_ADMIN_TOKEN || "").trim();
+const CUSTOM_STORE_MAX_ITEMS = intEnv("CUSTOM_STORE_MAX_ITEMS", 1000);
 const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || process.env.TZ || "Asia/Shanghai";
 const PAULKOI_LOGO_PATH = "/assets/paulkoi_logo_transparent.png";
 const PAULKOI_LOGO_PNG = readFileSync(new URL("./assets/paulkoi_logo_transparent.png", import.meta.url));
@@ -91,6 +105,9 @@ const stats = {
   neteaseSongRedirects: 0,
   neteasePlaylistRedirects: 0,
   playerDanmakuRequests: 0,
+  customDanmakuRequests: 0,
+  customRedirects: 0,
+  adminRequests: 0,
   apiDanmakuRequests: 0,
   resolveRequests: 0,
   apiPagesRequests: 0,
@@ -112,17 +129,6 @@ const stats = {
   upstreamErrors: 0
 };
 let statsDirty = false;
-
-loadPersistedStats();
-setInterval(savePersistedStatsIfDirty, STATS_SAVE_INTERVAL_MS).unref();
-process.once("SIGTERM", () => {
-  savePersistedStats();
-  process.exit(0);
-});
-process.once("SIGINT", () => {
-  savePersistedStats();
-  process.exit(0);
-});
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -153,6 +159,16 @@ const server = http.createServer(async (req, res) => {
     if (requestUrl.pathname === "/") {
       await backfillDashboardBilibiliTitles();
       sendHtml(res, 200, renderDashboard(requestUrl), noStoreHeaders());
+      return;
+    }
+
+    if (requestUrl.pathname === "/admin" || requestUrl.pathname === "/admin/") {
+      sendHtml(res, 200, renderAdminPage({ logoPath: PAULKOI_LOGO_PATH }), noStoreHeaders());
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/custom") {
+      await handleAdminCustomApi(req, res, requestUrl);
       return;
     }
 
@@ -214,10 +230,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`PaulKoiPlayer danmaku server listening on http://localhost:${PORT}`);
-});
-
 async function handlePlayer(req, res, requestUrl) {
   stats.playerRequests++;
   const vcridResult = parseVcridParam(requestUrl);
@@ -235,6 +247,59 @@ async function handlePlayer(req, res, requestUrl) {
     sendText(res, 400, "missing url\n");
     return;
   }
+
+  const unwrappedSource = unwrapKnownPlayerUrl(source);
+  const customItem = customStore ? (customStore.get(unwrappedSource) || customStore.get(source)) : null;
+  if (customItem) {
+    const danmakuMode = isDanmakuRequest(req, requestUrl);
+    logPlayerRequest(req, requestUrl, {
+      mode: danmakuMode ? "custom-danmaku" : "custom-redirect",
+      customId: customItem.customId,
+      vcrid: customItem.vcrid,
+      provider: "custom"
+    });
+
+    if (danmakuMode) {
+      stats.playerDanmakuRequests++;
+      stats.customDanmakuRequests = (stats.customDanmakuRequests || 0) + 1;
+      const tsv = customStore.getDanmakuTsv(customItem.customId);
+      if (!tsv) {
+        sendText(res, 404, "#YBDM/1\n#error=custom_danmaku_file_missing\n", noStoreHeaders());
+        return;
+      }
+      stats.emittedDanmakuRows += getDanmakuCount(tsv);
+      recordHistory({
+        provider: "custom",
+        contentType: "video",
+        customId: customItem.customId,
+        title: customItem.title,
+        sourceUrl: source,
+        normalizedUrl: unwrappedSource,
+        vcrid: customItem.vcrid
+      }, "player_danmaku");
+      sendText(res, 200, tsv, danmakuCacheHeaders());
+      return;
+    }
+
+    stats.playerRedirects++;
+    stats.customRedirects = (stats.customRedirects || 0) + 1;
+    recordHistory({
+      provider: "custom",
+      contentType: "video",
+      customId: customItem.customId,
+      title: customItem.title,
+      sourceUrl: source,
+      normalizedUrl: unwrappedSource,
+      vcrid: customItem.vcrid
+    }, "player_redirect");
+    res.writeHead(302, {
+      "Location": customItem.videoUrl,
+      ...noStoreHeaders()
+    });
+    res.end();
+    return;
+  }
+
   const whitelist = validateInputSource(source);
   if (!whitelist.allowed) {
     sendWhitelistRejection(res, whitelist);
@@ -368,6 +433,15 @@ async function handlePlayer(req, res, requestUrl) {
       return;
     }
 
+    if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && customStore && validateCustomId(unwrappedSource).ok) {
+      if (isDanmakuRequest(req, requestUrl)) {
+        sendText(res, 404, "#YBDM/1\n#error=custom_id_not_found\n", noStoreHeaders());
+      } else {
+        sendText(res, 404, "custom ID not found\n", noStoreHeaders());
+      }
+      return;
+    }
+
     sendText(res, 400, "#YBDM/1\n#error=missing_bvid_or_aid\n");
     return;
   }
@@ -448,6 +522,33 @@ async function handleResolve(res, requestUrl) {
     return;
   }
 
+  const customTarget = unwrapKnownPlayerUrl(source).trim();
+  const customItem = customStore ? (customStore.get(customTarget) || customStore.get(source.trim())) : null;
+  if (customItem) {
+    stats.customResolveRequests = (stats.customResolveRequests || 0) + 1;
+    markStatsDirty();
+    const videoUrl = customItem.videoUrl || "";
+    recordHistory({
+      provider: "custom",
+      contentType: "video",
+      sourceUrl: source,
+      customId: customItem.customId,
+      vcrid: customItem.vcrid,
+      title: customItem.title || customItem.customId
+    }, "api_resolve");
+    sendJson(res, 200, {
+      type: "custom",
+      provider: "custom",
+      inputUrl: source,
+      customId: customItem.customId,
+      vcrid: customItem.vcrid,
+      title: customItem.title || customItem.customId,
+      danmakuCount: customItem.danmakuCount || 0,
+      videoUrlPreview: videoUrl ? `${videoUrl.slice(0, 120)}...` : ""
+    }, noStoreHeaders());
+    return;
+  }
+
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = await parseInputUrl(source, forcedPage);
   if (!input.bvid && !input.aid) {
@@ -497,6 +598,11 @@ async function handleResolve(res, requestUrl) {
         level: resolved.level || level,
         audioUrlPreview: resolved.audioUrl ? `${resolved.audioUrl.slice(0, 120)}...` : ""
       }, noStoreHeaders());
+      return;
+    }
+
+    if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && validateCustomId(customTarget).valid) {
+      sendJson(res, 404, { error: "custom_id_not_found", customId: customTarget, inputUrl: source }, noStoreHeaders());
       return;
     }
 
@@ -551,6 +657,44 @@ async function handleVcridPlayer(req, res, requestUrl, vcrid) {
   }
 
   const danmakuMode = isDanmakuRequest(req, requestUrl);
+  if (record.provider === "custom") {
+    const customItem = customStore ? (customStore.get(record.customId) || customStore.getByVcrid(vcrid)) : null;
+    if (!customItem) {
+      if (danmakuMode) {
+        sendText(res, 404, "#YBDM/1\n#error=custom_entry_not_found\n", noStoreHeaders());
+      } else {
+        sendText(res, 404, "custom entry not found\n", noStoreHeaders());
+      }
+      return;
+    }
+
+    if (danmakuMode) {
+      stats.playerDanmakuRequests++;
+      stats.customDanmakuRequests = (stats.customDanmakuRequests || 0) + 1;
+      const tsv = customStore.getDanmakuTsv(customItem.customId);
+      if (!tsv) {
+        sendText(res, 404, "#YBDM/1\n#error=custom_danmaku_not_found\n", noStoreHeaders());
+        return;
+      }
+      stats.emittedDanmakuRows += getDanmakuCount(tsv);
+      recordHistoryFromVcrRecord(record, "vcrid_danmaku");
+      sendText(res, 200, tsv, danmakuCacheHeaders());
+      return;
+    }
+
+    const videoUrl = customItem.videoUrl;
+    if (!videoUrl) {
+      sendText(res, 404, "custom video url not found\n", noStoreHeaders());
+      return;
+    }
+    stats.playerRedirects++;
+    stats.customRedirects = (stats.customRedirects || 0) + 1;
+    recordHistoryFromVcrRecord(record, "vcrid_player");
+    res.writeHead(302, { "Location": videoUrl, ...noStoreHeaders() });
+    res.end();
+    return;
+  }
+
   if (record.provider === "netease") {
     if (danmakuMode) {
       stats.playerDanmakuRequests++;
@@ -608,6 +752,26 @@ async function handleVcridResolve(res, vcrid) {
   const record = vcrIdStore.get(vcrid);
   if (!record) {
     sendJson(res, 404, { error: "vcrid_not_found", vcrid }, noStoreHeaders());
+    return;
+  }
+
+  if (record.provider === "custom") {
+    const customItem = customStore ? (customStore.get(record.customId) || customStore.getByVcrid(vcrid)) : null;
+    if (!customItem) {
+      sendJson(res, 404, { error: "custom_entry_not_found", vcrid }, noStoreHeaders());
+      return;
+    }
+    const videoUrl = customItem.videoUrl || "";
+    recordHistoryFromVcrRecord(record, "vcrid_resolve");
+    sendJson(res, 200, {
+      type: "custom-vcrid",
+      provider: "custom",
+      vcrid,
+      customId: customItem.customId,
+      title: customItem.title || customItem.customId,
+      danmakuCount: customItem.danmakuCount || 0,
+      videoUrlPreview: videoUrl ? `${videoUrl.slice(0, 120)}...` : ""
+    }, noStoreHeaders());
     return;
   }
 
@@ -729,6 +893,59 @@ async function handlePages(req, res, requestUrl) {
     return;
   }
 
+  const customTarget = unwrapKnownPlayerUrl(source).trim();
+  const customItem = customStore ? (customStore.get(customTarget) || customStore.get(source.trim())) : null;
+  if (customItem) {
+    stats.customPagesRequests = (stats.customPagesRequests || 0) + 1;
+    markStatsDirty();
+    const origin = getRequestOrigin(req, requestUrl);
+    const vcrid = Number(customItem.vcrid || 0);
+    const urls = buildPlaybackUrls({
+      origin,
+      vcrid,
+      sourceUrl: `${origin}/player/?url=${encodeURIComponent(customItem.customId)}`,
+      page: 1
+    });
+    recordHistory({
+      provider: "custom",
+      contentType: "video",
+      sourceUrl: source,
+      normalizedUrl: `${origin}/player/?url=${encodeURIComponent(customItem.customId)}`,
+      customId: customItem.customId,
+      vcrid,
+      title: customItem.title || customItem.customId,
+      pagesCount: 1
+    }, "api_pages");
+
+    sendJson(res, 200, {
+      type: "bilibili-video",
+      provider: "custom",
+      customId: customItem.customId,
+      title: customItem.title || customItem.customId,
+      totalPages: 1,
+      selectedIndex: 1,
+      selected: {
+        page: 1,
+        title: customItem.title || customItem.customId,
+        vcrid,
+        customId: customItem.customId,
+        danmakuCount: customItem.danmakuCount || 0,
+        ...urls
+      },
+      pages: [
+        {
+          page: 1,
+          title: customItem.title || customItem.customId,
+          vcrid,
+          customId: customItem.customId,
+          danmakuCount: customItem.danmakuCount || 0,
+          ...urls
+        }
+      ]
+    }, noStoreHeaders());
+    return;
+  }
+
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const input = await parseInputUrl(source, forcedPage);
   const cid = normalizeAid(requestUrl.searchParams.get("cid") || "");
@@ -806,6 +1023,11 @@ async function handlePages(req, res, requestUrl) {
           provider: "netease"
         }, noStoreHeaders());
       }
+      return;
+    }
+
+    if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && validateCustomId(customTarget).valid) {
+      sendJson(res, 404, { error: "custom_id_not_found", customId: customTarget, inputUrl: source }, noStoreHeaders());
       return;
     }
 
@@ -983,6 +1205,10 @@ function historyKey(input = {}) {
     const songId = normalizeNumericId(input.songId || "");
     if (songId) return `netease:song:${songId}`;
   }
+  if (provider === "custom") {
+    const customId = String(input.customId || "").trim().toLowerCase();
+    if (customId) return `custom:video:${customId}`;
+  }
   return "";
 }
 
@@ -1049,6 +1275,23 @@ function seedHistoryFromExistingStores() {
       };
       if (!historyStore.data.records[historyKey(songPayload)]) {
         recordHistory(songPayload, "imported", { deferSave: true });
+        changed = true;
+      }
+      continue;
+    }
+    if (record.provider === "custom") {
+      const customPayload = {
+        provider: "custom",
+        contentType: "video",
+        customId: record.customId,
+        title: record.title,
+        videoUrl: record.videoUrl,
+        duration: record.duration,
+        vcrid: record.vcrid
+      };
+      const hKey = historyKey(customPayload);
+      if (hKey && !historyStore.data.records[hKey]) {
+        recordHistory(customPayload, "imported", { deferSave: true });
         changed = true;
       }
     }
@@ -1125,6 +1368,8 @@ class VcrIdStore {
       provider: input.provider || "bilibili",
       contentType: input.contentType || "page",
       contentKey,
+      customId: input.customId ? String(input.customId) : "",
+      videoUrl: input.videoUrl ? String(input.videoUrl) : "",
       bvid: input.bvid || "",
       aid: Number(input.aid || 0),
       cid: Number(input.cid || 0),
@@ -1188,6 +1433,7 @@ class VcrIdStore {
 
     const candidates = Object.values(this.data.records || {})
       .filter((record) => {
+        if (record?.provider === "custom") return false;
         const lastAccessAt = Number(record?.lastAccessAt || record?.updatedAt || record?.createdAt || 0);
         return record?.vcrid && lastAccessAt > 0 && now - lastAccessAt >= minUnusedMs;
       })
@@ -1239,6 +1485,10 @@ class VcrIdStore {
   lookupKeys(input) {
     const keys = [];
     if (input.contentKey) keys.push(input.contentKey);
+    if (input.provider === "custom") {
+      if (input.customId) keys.push(`custom:${String(input.customId).toLowerCase()}`);
+      return [...new Set(keys.filter(Boolean))];
+    }
     if (input.provider === "netease") {
       if (input.songId) keys.push(neteaseSongContentKey(input.songId, input.level));
       return [...new Set(keys.filter(Boolean))];
@@ -1255,7 +1505,10 @@ class VcrIdStore {
     for (let id = VCRID_MIN; id < Math.max(VCRID_MIN, Number(this.data.nextId || VCRID_MIN)); id++) {
       if (!this.data.records[String(id)]) return id;
     }
-    throw new Error("vcrid_pool_exhausted");
+    const err = new Error("vcrid_pool_exhausted");
+    err.code = "vcrid_pool_exhausted";
+    err.status = 503;
+    throw err;
   }
 
   get(vcrid) {
@@ -1287,7 +1540,9 @@ class VcrIdStore {
       delete this.data.contentIndex[previousKey];
     }
     if (record.contentKey) this.data.contentIndex[record.contentKey] = record.vcrid;
-    if (record.provider === "netease") {
+    if (record.provider === "custom") {
+      if (record.customId) this.data.contentIndex[`custom:${String(record.customId).toLowerCase()}`] = record.vcrid;
+    } else if (record.provider === "netease") {
       if (record.songId) this.data.contentIndex[neteaseSongContentKey(record.songId, record.level)] = record.vcrid;
     } else {
       if (record.cid) this.data.contentIndex[videoContentKey(record.bvid, record.aid, record.cid)] = record.vcrid;
@@ -1321,7 +1576,519 @@ class VcrIdStore {
   }
 }
 
-vcrIdStore = new VcrIdStore(VCRID_STORE_FILE, VCRID_MAX);
+class CustomDanmakuStore {
+  constructor(filePath, danmakuDir, vcrStore, maxItems = CUSTOM_STORE_MAX_ITEMS, onInvalidate = null) {
+    this.filePath = filePath;
+    this.danmakuDir = danmakuDir;
+    this.vcrStore = vcrStore;
+    this.maxItems = maxItems;
+    this.onInvalidate = onInvalidate;
+    this.data = {
+      version: 1,
+      items: Object.create(null)
+    };
+    this.available = true;
+    this.load();
+  }
+
+  load() {
+    try {
+      this.data.items = Object.create(null);
+      if (!existsSync(this.filePath)) return;
+      const raw = readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, "");
+      const payload = JSON.parse(raw);
+      if (payload && typeof payload.items === "object" && payload.items !== null) {
+        for (const [key, item] of Object.entries(payload.items)) {
+          if (!item || typeof item !== "object") continue;
+          const validId = validateCustomId(item.customId);
+          if (!validId.valid) {
+            console.warn(`[custom-store] skipping invalid item key: ${key}`);
+            continue;
+          }
+          const normKey = validId.id.toLowerCase();
+          this.data.items[normKey] = item;
+        }
+      }
+      for (const item of Object.values(this.data.items)) {
+        if (item?.customId && this.vcrStore?.available) {
+          const contentKey = `custom:${String(item.customId).toLowerCase()}`;
+          const existingVcrid = this.vcrStore.data.contentIndex[contentKey];
+          if (!existingVcrid || !this.vcrStore.data.records[String(existingVcrid)]) {
+            const vcrRecord = this.vcrStore.allocate({
+              provider: "custom",
+              customId: item.customId,
+              title: item.title,
+              videoUrl: item.videoUrl,
+              contentKey
+            });
+            item.vcrid = vcrRecord.vcrid;
+          } else {
+            item.vcrid = existingVcrid;
+          }
+        }
+      }
+    } catch (error) {
+      this.available = false;
+      console.warn(`[custom-store] failed to load store: ${error.message}`);
+    }
+  }
+
+  save() {
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true });
+      const tmpFile = `${this.filePath}.tmp`;
+      const plainItems = {};
+      for (const [k, v] of Object.entries(this.data.items)) {
+        if (Object.prototype.hasOwnProperty.call(this.data.items, k)) {
+          plainItems[k] = v;
+        }
+      }
+      const serialized = JSON.stringify({ version: 1, items: plainItems }, null, 2);
+      writeFileSync(tmpFile, `${serialized}\n`, "utf8");
+      renameSync(tmpFile, this.filePath);
+      return true;
+    } catch (error) {
+      this.available = false;
+      console.warn(`[custom-store] failed to save store: ${error.message}`);
+      return false;
+    }
+  }
+
+  get(customId) {
+    if (!customId) return null;
+    const key = String(customId).toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(this.data.items, key)) return null;
+    return this.data.items[key] || null;
+  }
+
+  getByVcrid(vcrid) {
+    if (!vcrid) return null;
+    const num = Number(vcrid);
+    return Object.values(this.data.items).find((item) => Number(item?.vcrid) === num) || null;
+  }
+
+  list() {
+    return Object.values(this.data.items).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
+
+  count() {
+    return Object.keys(this.data.items).length;
+  }
+
+  createVersionedFileName(customId) {
+    const safeId = String(customId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const timestamp = Date.now();
+    const rand = randomBytes(4).toString("hex");
+    return `${safeId}.${timestamp}.${rand}.ybdm`;
+  }
+
+  getDanmakuTsv(customId) {
+    const item = this.get(customId);
+    if (!item) return null;
+    if (item.contentFile) {
+      const filePath = join(this.danmakuDir, item.contentFile);
+      if (existsSync(filePath)) {
+        try {
+          return readFileSync(filePath, "utf8");
+        } catch {
+          return null;
+        }
+      }
+    }
+    const legacyPath = join(this.danmakuDir, `${String(item.customId).replace(/[^a-zA-Z0-9_-]/g, "_")}.ybdm`);
+    if (existsSync(legacyPath)) {
+      try {
+        return readFileSync(legacyPath, "utf8");
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  createOrUpdate({ customId, title, videoUrl, danmakuText, replaceExisting }) {
+    const validId = validateCustomId(customId);
+    if (!validId.ok && !validId.valid) {
+      const err = new Error(validId.message || validId.error);
+      err.status = 400;
+      throw err;
+    }
+
+    const validUrl = validateVideoUrl(videoUrl);
+    if (!validUrl.ok && !validUrl.valid) {
+      const err = new Error(validUrl.message || validUrl.error);
+      err.status = 400;
+      throw err;
+    }
+
+    const titleStr = String(title || "").trim();
+    if (Buffer.byteLength(titleStr, "utf8") > 600) {
+      const err = new Error("Title length exceeds 600 bytes limit.");
+      err.status = 400;
+      throw err;
+    }
+    const cleanTitle = titleStr.slice(0, 200) || validId.id;
+
+    const key = validId.id.toLowerCase();
+    const existing = this.get(key);
+    if (existing && !replaceExisting) {
+      const err = new Error("Custom ID already exists. Specify replaceExisting to overwrite.");
+      err.code = "custom_id_already_exists";
+      err.status = 409;
+      throw err;
+    }
+
+    if (!existing && this.count() >= this.maxItems) {
+      const err = new Error(`store_capacity_exceeded: Custom store capacity reached maximum allowed items (${this.maxItems}).`);
+      err.code = "store_capacity_exceeded";
+      err.status = 400;
+      throw err;
+    }
+
+    let parsedResult = null;
+    if (danmakuText && String(danmakuText).trim()) {
+      const res = parseUploadedDanmaku(danmakuText);
+      if (!res.success) {
+        const err = new Error(res.message || res.error);
+        err.status = 400;
+        throw err;
+      }
+      parsedResult = res;
+    } else if (existing) {
+      // Retain existing danmaku when editing without replacement
+    } else {
+      const err = new Error("Danmaku file (XML, JSON, or YBDM) is required for new entries.");
+      err.status = 400;
+      throw err;
+    }
+
+    const contentKey = `custom:${key}`;
+    const isNewVcrAllocation = !this.vcrStore.data.contentIndex[contentKey];
+    const vcrRecord = this.vcrStore.allocate({
+      provider: "custom",
+      customId: validId.id,
+      title: cleanTitle,
+      videoUrl: validUrl.url,
+      contentKey
+    });
+
+    const now = Date.now();
+    let count = existing?.count || 0;
+    let truncatedCount = 0;
+    let newContentFile = null;
+    let newContentPath = null;
+
+    try {
+      mkdirSync(this.danmakuDir, { recursive: true });
+      if (parsedResult) {
+        newContentFile = this.createVersionedFileName(validId.id);
+        newContentPath = join(this.danmakuDir, newContentFile);
+        const tsv = formatYbdmDanmaku({
+          customId: validId.id,
+          title: cleanTitle,
+          vcrid: vcrRecord.vcrid,
+          vcridMax: this.vcrStore.maxId,
+          rows: parsedResult.rows
+        });
+        writeFileSync(newContentPath, tsv, "utf8");
+        count = parsedResult.rows.length;
+        truncatedCount = parsedResult.truncatedCount || 0;
+      } else if (existing) {
+        const oldTsv = this.getDanmakuTsv(validId.id);
+        if (oldTsv) {
+          newContentFile = this.createVersionedFileName(validId.id);
+          newContentPath = join(this.danmakuDir, newContentFile);
+          const updatedTsv = updateYbdmHeader(oldTsv, {
+            title: cleanTitle,
+            vcrid: vcrRecord.vcrid,
+            vcridMax: this.vcrStore.maxId,
+            customId: validId.id
+          });
+          writeFileSync(newContentPath, updatedTsv, "utf8");
+        }
+      }
+    } catch (writeErr) {
+      if (newContentPath && existsSync(newContentPath)) {
+        try { unlinkSync(newContentPath); } catch {}
+      }
+      if (isNewVcrAllocation && vcrRecord) {
+        delete this.vcrStore.data.records[String(vcrRecord.vcrid)];
+        delete this.vcrStore.data.contentIndex[contentKey];
+        this.vcrStore.save();
+      }
+      const err = new Error(`Failed to write danmaku content file: ${writeErr.message}`);
+      err.status = 500;
+      throw err;
+    }
+
+    const previousItem = existing ? { ...existing } : null;
+    const oldContentFile = previousItem?.contentFile;
+
+    const newItem = {
+      customId: validId.id,
+      title: cleanTitle,
+      videoUrl: validUrl.url,
+      vcrid: vcrRecord.vcrid,
+      contentFile: newContentFile || oldContentFile || "",
+      count,
+      danmakuCount: count,
+      createdAt: previousItem?.createdAt || now,
+      updatedAt: now
+    };
+
+    this.data.items[key] = newItem;
+    if (!this.save()) {
+      if (previousItem) {
+        this.data.items[key] = previousItem;
+      } else {
+        delete this.data.items[key];
+      }
+      if (newContentPath && existsSync(newContentPath)) {
+        try { unlinkSync(newContentPath); } catch {}
+      }
+      if (isNewVcrAllocation && vcrRecord) {
+        delete this.vcrStore.data.records[String(vcrRecord.vcrid)];
+        delete this.vcrStore.data.contentIndex[contentKey];
+        this.vcrStore.save();
+      }
+      const err = new Error("Failed to save custom store metadata to disk.");
+      err.status = 500;
+      throw err;
+    }
+
+    if (oldContentFile && newContentFile && oldContentFile !== newContentFile) {
+      const oldPath = join(this.danmakuDir, oldContentFile);
+      if (existsSync(oldPath)) {
+        try { unlinkSync(oldPath); } catch {}
+      }
+    }
+
+    if (typeof this.onInvalidate === "function") {
+      this.onInvalidate(validId.id, vcrRecord.vcrid);
+    }
+    return { item: newItem, truncatedCount };
+  }
+
+  delete(customId) {
+    const key = String(customId || "").toLowerCase();
+    const existing = this.get(key);
+    if (!existing) return false;
+
+    const previousItem = { ...existing };
+    delete this.data.items[key];
+
+    if (!this.save()) {
+      this.data.items[key] = previousItem;
+      const err = new Error("Failed to commit deletion to custom store.");
+      err.status = 500;
+      throw err;
+    }
+
+    if (existing.contentFile) {
+      const contentPath = join(this.danmakuDir, existing.contentFile);
+      if (existsSync(contentPath)) {
+        try { unlinkSync(contentPath); } catch {}
+      }
+    }
+    const legacyPath = join(this.danmakuDir, `${String(existing.customId).replace(/[^a-zA-Z0-9_-]/g, "_")}.ybdm`);
+    if (existsSync(legacyPath)) {
+      try { unlinkSync(legacyPath); } catch {}
+    }
+
+    if (existing.vcrid) {
+      delete this.vcrStore.data.records[String(existing.vcrid)];
+      delete this.vcrStore.data.contentIndex[`custom:${key}`];
+      this.vcrStore.save();
+    }
+
+    if (typeof this.onInvalidate === "function") {
+      this.onInvalidate(existing.customId, existing.vcrid);
+    }
+    return true;
+  }
+}
+
+let customStore = null;
+
+function invalidateCustomCaches(customId, vcrid) {
+  const normId = String(customId || "").toLowerCase();
+  danmakuCache.delete(`dm:custom:${normId}`);
+  if (vcrid) danmakuCache.delete(`dm:custom:vcrid:${vcrid}`);
+  deleteDanmakuDiskEntry(`dm:custom:${normId}`);
+  if (vcrid) deleteDanmakuDiskEntry(`dm:custom:vcrid:${vcrid}`);
+}
+
+function authenticateAdmin(req) {
+  if (!ADMIN_TOKEN) {
+    return {
+      ok: false,
+      status: 403,
+      error: "admin_disabled",
+      message: "Admin operations are disabled because ADMIN_TOKEN is not configured on the server."
+    };
+  }
+
+  const authHeader = String(req.headers.authorization || "").trim();
+  const tokenHeader = String(req.headers["x-admin-token"] || "").trim();
+  let token = tokenHeader;
+  if (!token && authHeader.toLowerCase().startsWith("bearer ")) {
+    token = authHeader.slice(7).trim();
+  }
+
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      error: "missing_token",
+      message: "Authentication required. Missing Authorization Bearer token or X-Admin-Token header."
+    };
+  }
+
+  if (token.length > 512) {
+    return {
+      ok: false,
+      status: 401,
+      error: "invalid_token",
+      message: "Invalid admin token."
+    };
+  }
+
+  const tokenBuf = Buffer.from(token, "utf8");
+  const expectedBuf = Buffer.from(ADMIN_TOKEN, "utf8");
+  if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+    return {
+      ok: false,
+      status: 401,
+      error: "invalid_token",
+      message: "Invalid admin token."
+    };
+  }
+
+  return { ok: true };
+}
+
+function readJsonBody(req, limitBytes = 16 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    let exceeded = false;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limitBytes) {
+        exceeded = true;
+        req.resume();
+      } else {
+        chunks.push(chunk);
+      }
+    });
+    req.on("end", () => {
+      if (exceeded) {
+        const err = new Error("payload_too_large");
+        err.status = 413;
+        reject(err);
+        return;
+      }
+      try {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (!text.trim()) {
+          resolve({});
+          return;
+        }
+        resolve(JSON.parse(text));
+      } catch (err) {
+        const parseErr = new Error(`invalid_json_body: ${err.message}`);
+        parseErr.status = 400;
+        reject(parseErr);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+async function handleAdminCustomApi(req, res, requestUrl) {
+  stats.adminRequests = (stats.adminRequests || 0) + 1;
+
+  if (req.method === "GET") {
+    const auth = authenticateAdmin(req);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error, message: auth.message }, noStoreHeaders());
+      return;
+    }
+    const items = customStore ? customStore.list() : [];
+    sendJson(res, 200, { ok: true, success: true, count: items.length, items }, noStoreHeaders());
+    return;
+  }
+
+  if (req.method === "POST") {
+    const auth = authenticateAdmin(req);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error, message: auth.message }, noStoreHeaders());
+      return;
+    }
+    let body;
+    try {
+      body = await readJsonBody(req, 16 * 1024 * 1024);
+    } catch (err) {
+      const status = err.status || 400;
+      sendJson(res, status, { error: err.status === 413 ? "payload_too_large" : "invalid_payload", message: err.message }, noStoreHeaders());
+      return;
+    }
+
+    try {
+      const { item, truncatedCount } = customStore.createOrUpdate({
+        customId: body.customId || body.id,
+        title: body.title,
+        videoUrl: body.videoUrl || body.url,
+        danmakuText: body.danmaku || body.danmakuText,
+        replaceExisting: Boolean(body.replaceExisting)
+      });
+      sendJson(res, 200, { ok: true, success: true, item, truncatedCount }, noStoreHeaders());
+    } catch (err) {
+      const status = err.status || (err.code === "custom_id_already_exists" ? 409 : (err.code === "vcrid_pool_exhausted" ? 503 : 400));
+      sendJson(res, status, { error: err.code || "save_failed", message: err.message }, noStoreHeaders());
+    }
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    const auth = authenticateAdmin(req);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error, message: auth.message }, noStoreHeaders());
+      return;
+    }
+    let customId = requestUrl.searchParams.get("id") || requestUrl.searchParams.get("customId");
+    if (!customId) {
+      try {
+        const body = await readJsonBody(req, 64 * 1024);
+        customId = body.id || body.customId;
+      } catch (err) {
+        if (err.status === 413) {
+          sendJson(res, 413, { error: "payload_too_large", message: err.message }, noStoreHeaders());
+          return;
+        }
+      }
+    }
+    if (!customId) {
+      sendJson(res, 400, { error: "missing_id", message: "Missing customId to delete." }, noStoreHeaders());
+      return;
+    }
+
+    try {
+      const success = customStore.delete(customId);
+      if (!success) {
+        sendJson(res, 404, { error: "not_found", message: `Custom ID '${customId}' not found.` }, noStoreHeaders());
+        return;
+      }
+      sendJson(res, 200, { ok: true, success: true, deleted: customId }, noStoreHeaders());
+    } catch (err) {
+      const status = err.status || 500;
+      sendJson(res, status, { error: "delete_failed", message: err.message }, noStoreHeaders());
+    }
+    return;
+  }
+
+  sendJson(res, 405, { error: "method_not_allowed" }, noStoreHeaders());
+}
 
 class HistoryStore {
   constructor(filePath) {
@@ -1434,9 +2201,6 @@ class HistoryStore {
   }
 }
 
-historyStore = new HistoryStore(HISTORY_STORE_FILE);
-seedHistoryFromExistingStores();
-
 function recordBilibiliHistoryFromTsv(tsv, sourceUrl = "", normalizedUrl = "", event = "danmaku") {
   recordHistory({
     provider: "bilibili",
@@ -1510,6 +2274,18 @@ function recordHistoryFromVcrRecord(record, event = "vcrid") {
       album: record.album,
       duration: record.duration,
       level: record.level,
+      vcrid: record.vcrid
+    }, event);
+    return;
+  }
+  if (record.provider === "custom") {
+    recordHistory({
+      provider: "custom",
+      contentType: "video",
+      customId: record.customId,
+      title: record.title,
+      videoUrl: record.videoUrl,
+      duration: record.duration || 0,
       vcrid: record.vcrid
     }, event);
     return;
@@ -2890,6 +3666,22 @@ function extractSupportedUrlFromText(value) {
   return text;
 }
 
+function isBilibiliLikeSource(value) {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("bilibili.com") ||
+    text.includes("b23.tv") ||
+    text.includes("bilivideo.com") ||
+    /^bv[0-9a-z]{10,}$/i.test(text.trim()) ||
+    /^av\d+$/i.test(text.trim())
+  );
+}
+
+function isNeteaseLikeSource(value) {
+  const text = String(value || "").toLowerCase();
+  return text.includes("163.com") || text.includes("163cn.tv");
+}
+
 function validateInputSource(value) {
   const text = decodeRepeatedly(value);
   const urls = extractUrlCandidates(text);
@@ -2916,11 +3708,15 @@ function validateSupportedUrl(parsed, depth = 0) {
   const path = parsed.pathname || "/";
   if (depth > 4) return { allowed: false, error: "url_nested_too_deep", host, path };
 
-  if (host === "biliplayer.91vrchat.com") {
-    if (path.replace(/\/+$/, "") !== "/player" || !parsed.searchParams.has("url")) {
+  if (host === "biliplayer.91vrchat.com" || path.replace(/\/+$/, "") === "/player") {
+    if (path.replace(/\/+$/, "") !== "/player" || (!parsed.searchParams.has("url") && !parsed.searchParams.has("vcrid"))) {
       return { allowed: false, error: "unsupported_player_url", host, path };
     }
+    if (parsed.searchParams.has("vcrid")) {
+      return { allowed: true };
+    }
     const inner = decodeRepeatedly(parsed.searchParams.get("url") || "");
+    if (validateCustomId(inner).valid) return { allowed: true };
     const innerParsed = tryParseFlexibleUrl(inner);
     if (!innerParsed && (normalizeBvid(inner) || extractAid(inner))) return { allowed: true };
     if (!innerParsed) return { allowed: false, error: "unsupported_player_inner_url", host, path };
@@ -4321,12 +5117,12 @@ function historyIdentity(item) {
 }
 
 function historySourceLink(item) {
-  if (item.normalizedUrl) return item.normalizedUrl;
-  if (item.sourceUrl && /^https?:\/\//i.test(item.sourceUrl)) return item.sourceUrl;
   if (item.provider === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${item.bvid}/`;
   if (item.provider === "bilibili" && item.aid) return `https://www.bilibili.com/video/av${item.aid}/`;
   if (item.provider === "netease" && item.contentType === "playlist" && item.playlistId) return `https://music.163.com/playlist?id=${item.playlistId}`;
   if (item.provider === "netease" && item.contentType === "song" && item.songId) return `https://music.163.com/song?id=${item.songId}`;
+  if (item.normalizedUrl && /^https?:\/\//i.test(item.normalizedUrl)) return item.normalizedUrl;
+  if (item.sourceUrl && /^https?:\/\//i.test(item.sourceUrl)) return item.sourceUrl;
   return "";
 }
 
@@ -4577,11 +5373,17 @@ function renderDashboard(requestUrl = null) {
       ${historyDashboard.jumpForm}
     </section>
     <section class="panel">
+      <h2>&#33258;&#23450;&#20041;&#24377;&#24149;&#19982;&#26412;&#22320;&#30452;&#38142;</h2>
+      <p class="subtle">&#25903;&#25345;&#37197;&#32622;&#33258;&#23450;&#20041; ID&#12289;&#30452;&#38142;&#36339;&#36716;&#19982;&#19978;&#20256; XML/JSON/YBDM &#24377;&#24149;&#12290;<a href="/admin">&#25171;&#24320;&#31649;&#29702;&#38754;&#26495; (/admin)</a></p>
+    </section>
+    <section class="panel">
       <h2>&#25509;&#21475;</h2>
       <div class="grid">
-        <code>GET /player/?url=&lt;Bilibili URL&gt;</code>
-        <code>GET /player/?__dm=1&amp;url=&lt;Bilibili URL&gt;</code>
-        <code>GET /api/resolve?url=&lt;Bilibili URL&gt;</code>
+        <code>GET /player/?url=&lt;Bilibili URL or Custom ID&gt;</code>
+        <code>GET /player/?__dm=1&amp;url=&lt;Bilibili URL or Custom ID&gt;</code>
+        <code>GET /api/resolve?url=&lt;Bilibili URL or Custom ID&gt;</code>
+        <code>GET /api/pages?url=&lt;Bilibili URL or Custom ID&gt;</code>
+        <code>GET /admin</code>
         <code>GET /api/cache/stats</code>
       </div>
     </section>
@@ -4652,6 +5454,7 @@ function rateLimitPolicy(pathname) {
   if (path === "/api/pages") return { name: "api-pages", limit: RATE_LIMIT_API_PAGES };
   if (path === "/api/lyrics") return { name: "api-lyrics", limit: RATE_LIMIT_API_LYRICS };
   if (path === "/api/cache/stats") return { name: "cache-stats", limit: RATE_LIMIT_CACHE_STATS };
+  if (path === "/admin" || path === "/api/admin/custom") return { name: "admin", limit: RATE_LIMIT_GENERAL };
   return { name: "general", limit: RATE_LIMIT_GENERAL };
 }
 
@@ -4968,3 +5771,59 @@ function formatDuration(seconds) {
   parts.push(`${rest}s`);
   return parts.join(" ");
 }
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const currentFile = fileURLToPath(import.meta.url);
+  const entryPath = resolve(process.argv[1]);
+  if (entryPath === currentFile) return true;
+  try {
+    if (statSync(entryPath).isDirectory()) {
+      const pkgPath = join(entryPath, "package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (pkg.main && resolve(entryPath, pkg.main) === currentFile) return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+function startDirectServer() {
+  loadPersistedStats();
+  setInterval(savePersistedStatsIfDirty, STATS_SAVE_INTERVAL_MS).unref();
+  process.once("SIGTERM", () => {
+    savePersistedStats();
+    process.exit(0);
+  });
+  process.once("SIGINT", () => {
+    savePersistedStats();
+    process.exit(0);
+  });
+
+  vcrIdStore = new VcrIdStore(VCRID_STORE_FILE, VCRID_MAX);
+  customStore = new CustomDanmakuStore(CUSTOM_STORE_FILE, CUSTOM_DANMAKU_DIR, vcrIdStore, CUSTOM_STORE_MAX_ITEMS, invalidateCustomCaches);
+  historyStore = new HistoryStore(HISTORY_STORE_FILE);
+  seedHistoryFromExistingStores();
+
+  server.listen(PORT, () => {
+    const address = server.address();
+    const actualPort = address && typeof address === "object" ? address.port : PORT;
+    console.log(`PaulKoiPlayer danmaku server listening on http://localhost:${actualPort}`);
+  });
+}
+
+if (isMainModule()) {
+  startDirectServer();
+}
+
+export {
+  CustomDanmakuStore,
+  VcrIdStore,
+  HistoryStore,
+  customStore,
+  vcrIdStore,
+  historyStore,
+  server,
+  startDirectServer
+};

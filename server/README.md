@@ -1,6 +1,6 @@
 # PaulKoiPlayer Danmaku Server
 
-Version: `1.0.3`
+Version: `1.2` (npm: `1.2.0`)
 
 A small Dockerized Node.js proxy for VRChat video player style playback URLs.
 
@@ -19,6 +19,24 @@ It accepts a `/player/?url=...` request, resolves supported Bilibili and NetEase
 - Persistent Bilibili danmaku disk cache under `/app/data/danmaku-cache`, with bounded dashboard display.
 - Persistent dashboard counters under `/app/data/stats.json`, including Bilibili video redirects, Bilibili live redirects, NetEase redirects, danmaku requests, cache hits, and emitted danmaku rows.
 - No database required.
+
+## Server 1.2
+
+The official 1.2 backend adds custom media and danmaku management at `/admin`.
+Configure `ADMIN_TOKEN` in a local `.env` next to `docker-compose.yml`, then rebuild
+and restart the service. The admin page accepts XML, JSON or `#YBDM/1` files and
+stores each custom entry with a persistent vcrid. Editing without a new file
+preserves the existing danmaku. Link buttons copy complete URLs using the current
+page origin. The token visibility button switches between eye and eye-off icons.
+
+Bilibili multi-part manifests, NetEase song/playlist manifests, lyrics, playback
+history and the existing video/live redirects remain available. Dashboard history
+links open the source provider's page. JSON stores and danmaku files live in the
+`./data` volume and survive container replacement.
+
+See [README.Docker.md](README.Docker.md) for installation, admin configuration,
+upgrade and backup instructions. This release publishes only the backend; Unity
+packages and existing releases are unchanged.
 
 ## Quick Start
 

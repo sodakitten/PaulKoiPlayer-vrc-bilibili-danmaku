@@ -1,3 +1,7 @@
+import {
+  validateCustomId
+} from "./custom-danmaku.js";
+
 const DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36";
 const ZNNU_SIGNATURE_DOMAIN = "music.znnu.com";
 const ZNNU_REFERER = "musicParser";
@@ -13,6 +17,8 @@ export default {
       if (url.pathname === "/health") return text("ok\n");
       if (url.pathname === "/" || url.pathname === "") return html(renderHome(env));
       if (url.pathname === "/api/cache/stats") return json(buildWorkerStats(env));
+      if (url.pathname === "/admin" || url.pathname === "/admin/") return await handleAdmin(request, env, ctx, url);
+      if (url.pathname === "/api/admin/custom") return await handleAdminCustomApi(request, env, ctx, url);
       if (url.pathname === "/api/danmaku") return await handleApiDanmaku(request, env, ctx, url);
       if (url.pathname === "/api/resolve") return await handleResolve(request, env, ctx, url);
       if (url.pathname === "/api/pages") return await handlePages(request, env, ctx, url);
@@ -25,8 +31,18 @@ export default {
 };
 
 async function handlePlayer(request, env, ctx, requestUrl) {
+  if (requestUrl.searchParams.has("vcrid")) {
+    return await proxyToDocker(request, env, requestUrl);
+  }
+
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) return text("missing url\n", 400);
+
+  const customTarget = unwrapKnownPlayerUrl(source).trim();
+  if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && validateCustomId(customTarget).valid) {
+    return await proxyToDocker(request, env, requestUrl);
+  }
+
   if (isBilibiliLikeSource(source)) return await proxyToDocker(request, env, requestUrl);
 
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
@@ -80,10 +96,16 @@ async function handleApiDanmakuLocal(request, env, ctx, requestUrl) {
   return text(tsv, 200, danmakuCacheHeaders());
 }
 
-async function handleResolve(_request, env, ctx, requestUrl) {
+async function handleResolve(request, env, ctx, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) return json({ error: "missing url" }, 400);
-  if (isBilibiliLikeSource(source)) return await proxyToDocker(_request, env, requestUrl);
+
+  const customTarget = unwrapKnownPlayerUrl(source).trim();
+  if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && validateCustomId(customTarget).valid) {
+    return await proxyToDocker(request, env, requestUrl);
+  }
+
+  if (isBilibiliLikeSource(source)) return await proxyToDocker(request, env, requestUrl);
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
   const liveInput = await parseLiveInput(source, env, ctx);
   if (liveInput) {
@@ -110,6 +132,12 @@ async function handleResolve(_request, env, ctx, requestUrl) {
 async function handlePages(request, env, ctx, requestUrl) {
   const source = requestUrl.searchParams.get("url") || "";
   if (!source) return json({ error: "missing url" }, 400, noStoreHeaders());
+
+  const customTarget = unwrapKnownPlayerUrl(source).trim();
+  if (!isBilibiliLikeSource(source) && !isNeteaseLikeSource(source) && validateCustomId(customTarget).valid) {
+    return await proxyToDocker(request, env, requestUrl);
+  }
+
   if (isBilibiliLikeSource(source)) return await proxyToDocker(request, env, requestUrl);
 
   const forcedPage = readPositiveInt(requestUrl.searchParams.get("p") || requestUrl.searchParams.get("page"), 0);
@@ -150,6 +178,14 @@ async function handlePages(request, env, ctx, requestUrl) {
     totalPages: pages.length,
     pages: pageItems
   }, 200, noStoreHeaders());
+}
+
+async function handleAdmin(request, env, ctx, url) {
+  return await proxyToDocker(request, env, url);
+}
+
+async function handleAdminCustomApi(request, env, ctx, url) {
+  return await proxyToDocker(request, env, url);
 }
 
 async function parseInputUrl(rawValue, env, ctx, forcedPage = 0) {
@@ -806,21 +842,79 @@ function buildWorkerStats(env) {
 }
 
 async function proxyToDocker(request, env, requestUrl) {
-  const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, getDockerOrigin(env));
+  const dockerOrigin = getDockerOrigin(env);
+  if (!dockerOrigin) {
+    return json({
+      error: "docker_origin_not_configured",
+      message: "Worker requires BILI_DOCKER_ORIGIN environment variable pointing to the authoritative Node Docker backend. Standalone KV custom deployment is not supported."
+    }, 503, noStoreHeaders());
+  }
+
+  const reqUrl = new URL(request.url);
+  const targetOrigin = new URL(dockerOrigin).origin;
+  if (reqUrl.origin === targetOrigin) {
+    return json({
+      error: "docker_origin_self_loop",
+      message: "BILI_DOCKER_ORIGIN cannot point to the Worker itself. It must point to the authoritative Node Docker backend."
+    }, 503, noStoreHeaders());
+  }
+
+  const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, dockerOrigin);
   const headers = new Headers();
   for (const name of ["accept", "accept-language", "content-type", "range", "user-agent"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+
+  // Forward admin credentials only to admin endpoints on Node backend, NEVER to external upstreams!
+  if (requestUrl.pathname.startsWith("/admin") || requestUrl.pathname.startsWith("/api/admin")) {
+    const auth = request.headers.get("authorization");
+    const adminToken = request.headers.get("x-admin-token");
+    if (auth) headers.set("authorization", auth);
+    if (adminToken) headers.set("x-admin-token", adminToken);
+  }
+
   const cfIp = request.headers.get("cf-connecting-ip");
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (cfIp) headers.set("CF-Connecting-IP", cfIp);
   if (forwardedFor || cfIp) headers.set("X-Forwarded-For", forwardedFor || cfIp);
   headers.set("X-Worker-Proxy", "paulkoi-danmaku-worker");
 
+  let body = undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
+    const MAX_PROXY_BODY_BYTES = 16 * 1024 * 1024;
+    if (contentLength > MAX_PROXY_BODY_BYTES) {
+      return json({ error: "payload_too_large", message: "Request body exceeds 16MB limit." }, 413, noStoreHeaders());
+    }
+    if (request.body) {
+      const reader = request.body.getReader();
+      const chunks = [];
+      let totalBytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_PROXY_BODY_BYTES) {
+          try { await reader.cancel(); } catch {}
+          return json({ error: "payload_too_large", message: "Request body exceeds 16MB limit." }, 413, noStoreHeaders());
+        }
+        chunks.push(value);
+      }
+      const combined = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      body = combined.buffer;
+    }
+  }
+
   const response = await fetch(target, {
     method: request.method,
     headers,
+    body,
     redirect: "manual"
   });
   return withCors(response);
@@ -843,19 +937,21 @@ function isBilibiliLikeSource(value) {
   });
 }
 
-function getDockerOrigin(env) {
-  return normalizeOrigin(getEnv(env, "BILI_DOCKER_ORIGIN", "https://danmaku.paulkoishi.com"));
+function isNeteaseLikeSource(value) {
+  const text = String(value || "").toLowerCase();
+  return text.includes("163.com") || text.includes("163cn.tv");
 }
 
-function normalizeOrigin(value) {
-  const fallback = "https://danmaku.paulkoishi.com";
-  const parsed = tryParseUrl(String(value || "").trim());
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) return fallback;
+function getDockerOrigin(env) {
+  const val = getEnv(env, "BILI_DOCKER_ORIGIN", "");
+  if (!val) return "";
+  const parsed = tryParseUrl(String(val).trim());
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) return "";
   return parsed.origin;
 }
 
 function renderHome(env) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PaulKoiPlayer Worker</title><style>body{font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;background:#f6f7f9;color:#172026}.shell{max-width:880px;margin:0 auto;padding:40px 20px}.panel{background:#fff;border:1px solid #dce3e8;border-radius:8px;padding:24px;box-shadow:0 16px 40px rgba(25,38,49,.1)}code{display:block;background:#f2f5f7;border:1px solid #dce3e8;border-radius:8px;padding:12px;overflow:auto}</style></head><body><main class="shell"><section class="panel"><h1>PaulKoiPlayer Worker</h1><p>Cloudflare Workers 核心解析版。时间显示：${escapeHtml(getEnv(env, "DISPLAY_TIME_ZONE", "Asia/Shanghai"))}</p><code>GET /player/?url=&lt;Bilibili / Live / NetEase URL&gt;</code><code>GET /api/danmaku?url=&lt;Bilibili URL&gt;</code><code>GET /health</code></section></main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PaulKoiPlayer Worker</title><style>body{font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;background:#f6f7f9;color:#172026}.shell{max-width:880px;margin:0 auto;padding:40px 20px}.panel{background:#fff;border:1px solid #dce3e8;border-radius:8px;padding:24px;box-shadow:0 16px 40px rgba(25,38,49,.1)}code{display:block;background:#f2f5f7;border:1px solid #dce3e8;border-radius:8px;padding:12px;overflow:auto}a{color:#1a7f37;font-weight:700;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><main class="shell"><section class="panel"><h1>PaulKoiPlayer Worker</h1><p>Cloudflare Workers 核心解析版。时间显示：${escapeHtml(getEnv(env, "DISPLAY_TIME_ZONE", "Asia/Shanghai"))}</p><p><a href="/admin">管理自定义弹幕与本地直链 (/admin)</a></p><code>GET /player/?url=&lt;Bilibili / Live / NetEase / Custom URL&gt;</code><code>GET /api/danmaku?url=&lt;Bilibili / Custom URL&gt;</code><code>GET /admin</code><code>GET /health</code></section></main></body></html>`;
 }
 
 function redirect(location) {

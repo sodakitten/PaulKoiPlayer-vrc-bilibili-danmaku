@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<i><d p="0,1,25,16777215,0,0">Valid content</d></i>
+<!-- trailing garbage follows -->
+extra text outside root

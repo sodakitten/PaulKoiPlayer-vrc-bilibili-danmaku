@@ -2,7 +2,7 @@ services:
   paulkoi-danmaku-server:
     build:
       context: .
-    image: paulkoi-danmaku-server:1.11
+    image: paulkoi-danmaku-server:1.2
     container_name: paulkoi-danmaku-server
     restart: unless-stopped
     ports:
@@ -47,6 +47,12 @@ services:
       NETEASE_LYRICS_CACHE_MAX_ENTRIES: "500"
       DASHBOARD_DANMAKU_MAX_ENTRIES: "20"
       STATS_FILE: "/app/data/stats.json"
+      CUSTOM_STORE_FILE: "/app/data/custom-store.json"
+      CUSTOM_DANMAKU_DIR: "/app/data/custom-danmaku"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
+      # Set ADMIN_TOKEN to enable /admin and /api/admin/custom management endpoints.
+      # If unset, all admin management APIs are disabled by default for security.
+      CUSTOM_STORE_MAX_ITEMS: "1000"
       # Optional. Uncomment when anonymous Bilibili danmaku is incomplete.
       # BILI_COOKIE: "SESSDATA=...; bili_jct=..."
       # BILI_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"

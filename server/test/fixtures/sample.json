@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "title": "Synthetic Test Sample"
+  },
+  "danmaku": [
+    {
+      "progress_sec": 0,
+      "mode": 1,
+      "fontsize": 25,
+      "color_int": 16777215,
+      "pool": 0,
+      "content": "First danmaku at start"
+    },
+    {
+      "progress_sec": 5.5,
+      "mode": 4,
+      "fontsize": 25,
+      "color_int": 0,
+      "pool": 0,
+      "content": "Black bottom danmaku & test \"quotes\""
+    },
+    {
+      "progress_sec": 12.8,
+      "mode": 5,
+      "fontsize": 18,
+      "color_int": 16711680,
+      "pool": 0,
+      "content": "Red top danmaku"
+    },
+    {
+      "progress_sec": 25,
+      "mode": 1,
+      "fontsize": 25,
+      "color_int": 65280,
+      "pool": 0,
+      "content": "Green rolling <escaped> 'danmaku'"
+    }
+  ]
+}

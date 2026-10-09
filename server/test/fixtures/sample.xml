@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<i>
+  <chatserver>chat.bilibili.com</chatserver>
+  <chatid>123456</chatid>
+  <title>Synthetic Test Sample</title>
+  <d p="0.000,1,25,16777215,1790303239,0,6b79d5b0,1">First danmaku at start</d>
+  <d p="5.500,4,25,0,1790303240,0,11111111,2">Black bottom danmaku &amp; test &quot;quotes&quot;</d>
+  <d p="12.800,5,18,16711680,1790303241,0,22222222,3">Red top danmaku</d>
+  <d p="25.000,1,25,65280,1790303242,0,33333333,4">Green rolling &lt;escaped&gt; &apos;danmaku&apos;</d>
+</i>
