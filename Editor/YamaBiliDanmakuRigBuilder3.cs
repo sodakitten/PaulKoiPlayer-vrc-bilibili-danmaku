@@ -22,9 +22,9 @@ namespace YamaBiliDanmakuV3.Editor
     private const float CanvasWidth = 1750f;
     private const float CanvasHeight = 980f;
     private const int DanmakuCanvasSortingOrder = -1;
-    private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?url=";
+    private const string DefaultUrlPrefix = "https://danmaku.paulkoishi.com/player/?__pkdm=2&url=";
     private const string DefaultPagesApiPrefix = DefaultUrlPrefix;
-    private const string DefaultVcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?vcrid=";
+    private const string DefaultVcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?__pkdm=2&vcrid=";
     private const int DefaultVcridMax = 1000000;
     private const string DefaultPrefabPath = "Assets/YamaBiliDanmakuV3/Prefabs/Bili Danmaku Module.prefab";
     private const string OutlineMaterialPath = "Assets/YamaBiliDanmakuV3/Materials/Bili Danmaku TMP Outline.mat";
@@ -1880,7 +1880,6 @@ namespace YamaBiliDanmakuV3.Editor
       SetBool(serialized, "_editorHeavyOutlineEnabled", true);
       SetFloat(serialized, "_editorOutlineWidth", DefaultOutlineWidth);
       SetFloat(serialized, "_editorOutlineAlpha", DefaultOutlineAlpha);
-      SetInt(serialized, "_maxDanmakuLines", 4096);
 
       SerializedProperty poolProperty = serialized.FindProperty("_textPool");
       if (poolProperty != null)
@@ -2005,6 +2004,14 @@ namespace YamaBiliDanmakuV3.Editor
 
       SerializedProperty moduleProperty = serialized.FindProperty("_danmakuModule");
       if (moduleProperty != null && module != null) moduleProperty.objectReferenceValue = module;
+
+      if (module != null)
+      {
+        SerializedObject moduleSerialized = new SerializedObject(module);
+        SerializedProperty pagesProperty = moduleSerialized.FindProperty("_pagesPlaylist");
+        if (pagesProperty != null) pagesProperty.objectReferenceValue = playlist;
+        moduleSerialized.ApplyModifiedPropertiesWithoutUndo();
+      }
 
       Component helper = FindUrlPrefixHelperNear(playlist, module);
       SerializedProperty helperProperty = serialized.FindProperty("_urlPrefixHelper");

@@ -17,6 +17,8 @@ namespace YamaBiliDanmakuV3
   {
     private const int VisibleButtonCount = 6;
     private const int MaxUnifiedQueueItems = 200;
+    private const int MaxPagesRetries = 3;
+    private const float PagesRetryFallbackSeconds = 180f;
     private const int RequestModeNone = 0;
     private const int RequestModeEnqueue = 1;
     private const int RequestModeExpandCurrent = 2;
@@ -41,7 +43,7 @@ namespace YamaBiliDanmakuV3
     [SerializeField, Range(0.25f, 3f)] private float _playbackWatchSeconds = 0.5f;
 
     [Header("VCRID Catalog")]
-    [SerializeField] private string _vcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?vcrid=";
+    [SerializeField] private string _vcridUrlPrefix = "https://danmaku.paulkoishi.com/player/?__pkdm=2&vcrid=";
     [SerializeField, Range(1, 1000000)] private int _vcridMax = 1000000;
     [SerializeField, HideInInspector] private VRCUrl[] _vcridUrls = new VRCUrl[0];
 
@@ -103,6 +105,13 @@ namespace YamaBiliDanmakuV3
     private bool _downloadIsMetadata;
     private VRCUrl _pendingDownloadUrl = VRCUrl.Empty;
     private bool _pendingDownloadIsMetadata;
+    private VRCUrl _downloadRequestUrl = VRCUrl.Empty;
+    private int _pagesRetryCount;
+    private bool _pagesRetryPending;
+    private float _pagesRetryDueAt;
+    private VRCUrl _pagesRetryUrl = VRCUrl.Empty;
+    private bool _pagesRetryIsMetadata;
+    private float _lastPagesDownloadAt = -5f;
     private bool _isNeteasePlaylist;
     private bool _parsedShouldCycle;
     private bool _autoAdvancePending;
@@ -302,16 +311,9 @@ namespace YamaBiliDanmakuV3
           return;
         }
 
-        if (_totalPages > 1 && IsVcridPlaybackUrl(request))
-        {
-          _lastObservedPlaybackUrl = request;
-          SetStatus("保持当前播放列表");
-          SendCustomEventDelayedSeconds(nameof(WatchPlaybackUrl), _playbackWatchSeconds);
-          return;
-        }
-
         if (_totalPages > 1 &&
             !string.IsNullOrEmpty(request) &&
+            !IsVcridPlaybackUrl(request) &&
             !IsManifestSourceRequestUrl(request))
         {
           _lastObservedPlaybackUrl = request;
@@ -377,10 +379,18 @@ namespace YamaBiliDanmakuV3
       if (_unifiedRequestMode != RequestModeNone || _loading) return;
       if (!Networking.IsOwner(_controller.gameObject)) return;
       if (_controller.Stopped && !_controller.IsLoading) return;
-      if (!IsVcridPlaybackUrl(request) && IsPagesRequestUrl(request) && request != _expandedPlaybackSourceUrl)
+      if (IsPagesRequestUrl(request) && request != _expandedPlaybackSourceUrl &&
+          (!IsVcridPlaybackUrl(request) || !IsKnownManifestVcridUrl(request)))
       {
         BeginUnifiedSourceRequest(playbackUrl, RequestModeExpandCurrent, false);
       }
+    }
+
+    private bool IsKnownManifestVcridUrl(string url)
+    {
+      if (!IsVcridPlaybackUrl(url)) return false;
+      if (_biliMixedManifestMode) return FindBiliManifestIndexFromUrl(url) >= 0;
+      return (!_useUnifiedQueue || _standaloneManifestMode) && FindManifestItemIndexFromUrl(url) >= 0;
     }
 
     private void ScheduleNormalizeQueue()
@@ -523,18 +533,24 @@ namespace YamaBiliDanmakuV3
       _completeUnifiedRequestAfterMetadata = false;
       _requestStartedAt = -1f;
       _metadataRequestStartedAt = -1f;
+      _pagesRetryCount = 0;
+      _pagesRetryPending = false;
+      _pagesRetryUrl = VRCUrl.Empty;
       // Do not release an SDK request here: a late response has only a URL,
       // not our epoch. Drain it before issuing another request to that URL.
     }
 
     private void QueuePagesDownload(VRCUrl url, bool metadata)
     {
+      _pagesRetryCount = 0;
+      _pagesRetryPending = false;
+      _pagesRetryUrl = VRCUrl.Empty;
       _pendingDownloadUrl = url;
       _pendingDownloadIsMetadata = metadata;
       StartPendingPagesDownload();
     }
 
-    private void StartPendingPagesDownload()
+    public void StartPendingPagesDownload()
     {
       if (_downloadInFlight || VRCUrl.IsNullOrEmpty(_pendingDownloadUrl)) return;
       if (!IsPagesRequestCurrent())
@@ -542,12 +558,20 @@ namespace YamaBiliDanmakuV3
         CancelInvalidPagesRequest();
         return;
       }
+      float spacing = 5f - (Time.time - _lastPagesDownloadAt);
+      if (spacing > 0f)
+      {
+        SendCustomEventDelayedSeconds(nameof(StartPendingPagesDownload), spacing);
+        return;
+      }
       VRCUrl url = _pendingDownloadUrl;
       _pendingDownloadUrl = VRCUrl.Empty;
+      _downloadRequestUrl = url;
       _downloadUrl = GetUrlString(url);
       _downloadEpoch = _requestEpoch;
       _downloadIsMetadata = _pendingDownloadIsMetadata;
       _downloadInFlight = true;
+      _lastPagesDownloadAt = Time.time;
       if (_downloadIsMetadata)
       {
         _metadataRequestStartedAt = Time.time;
@@ -577,9 +601,91 @@ namespace YamaBiliDanmakuV3
         CancelInvalidPagesRequest();
         return false;
       }
+      _requestStartedAt = -1f;
+      _metadataRequestStartedAt = -1f;
       return _downloadIsMetadata
         ? value == _pendingNeteaseMetadataUrl
         : _loading && value == _lastRequestUrl;
+    }
+
+    private bool SchedulePagesRetry(VRCUrl url, bool metadata, string body, int errorCode)
+    {
+      if (!IsPagesRequestCurrent()) return false;
+      string header = ExtractPagesMetadataHeader(body);
+      if (errorCode == 403 || errorCode == 404 || GetPagesHeaderField(header, "retryable") == "0") return false;
+      if (errorCode >= 400 && errorCode < 500 && errorCode != 408 && errorCode != 429) return false;
+      if (!_pagesRetryPending && _pagesRetryCount >= MaxPagesRetries) return false;
+
+      float delay = PagesRetryFallbackSeconds;
+      int attempt = _pagesRetryPending ? _pagesRetryCount : _pagesRetryCount + 1;
+      float localBackoff = attempt == 1 ? 5f : attempt == 2 ? 10f : 20f;
+      string retryAfter = GetPagesHeaderField(header, "retry_after_seconds");
+      if (int.TryParse(retryAfter, out int seconds) && seconds >= 0) delay = Mathf.Max(localBackoff, seconds);
+      // A timeout reserves one retry but retains the SDK slot until its callback.
+      // A later error may supply a remaining cooldown; it must not consume another retry.
+      if (!_pagesRetryPending)
+      {
+        _pagesRetryCount++;
+        _pagesRetryDueAt = Time.time + delay;
+      }
+      else if (!string.IsNullOrEmpty(retryAfter)) _pagesRetryDueAt = Time.time + delay;
+      _pagesRetryPending = true;
+      _pagesRetryUrl = url;
+      _pagesRetryIsMetadata = metadata;
+      _requestStartedAt = -1f;
+      _metadataRequestStartedAt = -1f;
+      SendCustomEventDelayedSeconds(nameof(RetryPagesDownload), Mathf.Max(0.1f, _pagesRetryDueAt - Time.time));
+      SetStatus(metadata ? "歌曲信息暂不可用，等待重试" : "列表暂不可用，等待重试");
+      return true;
+    }
+
+    public void RetryPagesDownload()
+    {
+      if (!_pagesRetryPending || !_requestActive) return;
+      if (!IsPagesRequestCurrent())
+      {
+        CancelInvalidPagesRequest();
+        return;
+      }
+      float remaining = _pagesRetryDueAt - Time.time;
+      if (remaining > 0f)
+      {
+        SendCustomEventDelayedSeconds(nameof(RetryPagesDownload), remaining);
+        return;
+      }
+      if (_downloadInFlight) return;
+      _pagesRetryPending = false;
+      _pendingDownloadUrl = _pagesRetryUrl;
+      _pendingDownloadIsMetadata = _pagesRetryIsMetadata;
+      _pagesRetryUrl = VRCUrl.Empty;
+      StartPendingPagesDownload();
+    }
+
+    private void FinishPagesDownloadFailure(string status)
+    {
+      if (_downloadIsMetadata)
+      {
+        _pendingNeteaseMetadataUrl = "";
+        _pendingNeteaseMetadataIndex = -1;
+        if (_useUnifiedQueue && _completeUnifiedRequestAfterMetadata)
+        {
+          _completeUnifiedRequestAfterMetadata = false;
+          CompleteUnifiedRequest();
+          return;
+        }
+      }
+      else
+      {
+        _loading = false;
+        _syncedManifestLoadPending = false;
+        if (_useUnifiedQueue && _unifiedRequestMode != RequestModeNone)
+        {
+          CompleteUnifiedRequestWithRawFallback(status);
+          return;
+        }
+      }
+      InvalidatePagesDownloads();
+      SetStatus(status);
     }
 
     public void CheckPagesTimeout()
@@ -596,15 +702,8 @@ namespace YamaBiliDanmakuV3
         SendCustomEventDelayedSeconds(nameof(CheckPagesTimeout), remaining);
         return;
       }
-      _loading = false;
-      _syncedManifestLoadPending = false;
-      if (_useUnifiedQueue && _unifiedRequestMode != RequestModeNone)
-      {
-        CompleteUnifiedRequestWithRawFallback("解析超时，已按单项加入");
-        return;
-      }
-      InvalidatePagesDownloads();
-      SetStatus("加载超时");
+      if (SchedulePagesRetry(_downloadRequestUrl, false, "", 0)) return;
+      FinishPagesDownloadFailure("列表加载超时，已保留原链接");
     }
 
     public void PreviousPage()
@@ -1084,6 +1183,14 @@ namespace YamaBiliDanmakuV3
       string resultUrl = GetUrlString(result.Url);
       if (!string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) && resultUrl == _pendingNeteaseMetadataUrl)
       {
+        string header = ExtractPagesMetadataHeader(result.Result);
+        if (string.IsNullOrEmpty(GetPagesHeaderField(header, "title")))
+        {
+          if (SchedulePagesRetry(result.Url, true, result.Result, 200)) return;
+          FinishPagesDownloadFailure("歌曲信息读取失败，已保留列表");
+          return;
+        }
+        _pagesRetryPending = false;
         int metadataIndex = _pendingNeteaseMetadataIndex;
         _pendingNeteaseMetadataUrl = "";
         _pendingNeteaseMetadataIndex = -1;
@@ -1098,13 +1205,21 @@ namespace YamaBiliDanmakuV3
       }
 
       if (resultUrl != _lastRequestUrl) return;
+      // Comment completeness does not determine whether the manifest is usable.
+      bool preserveCurrentList = _unifiedRequestMode == RequestModeNone && _totalPages > 1 && IsKnownManifestVcridUrl(resultUrl);
+      if (!preserveCurrentList && !ParsePagesJson(result.Result))
+      {
+        if (SchedulePagesRetry(result.Url, false, result.Result, 200)) return;
+        FinishPagesDownloadFailure("列表解析失败，已保留原链接");
+        return;
+      }
+      _pagesRetryPending = false;
       _lastRequestUrl = "";
       if (_useUnifiedQueue && _unifiedRequestMode != RequestModeNone)
       {
         _loading = false;
         _syncedManifestLoadPending = false;
         _lastManifestSourceUrl = result.Url;
-        ParsePagesJson(result.Result);
         if (_totalPages <= 0)
         {
           CompleteUnifiedRequestWithRawFallback("未识别播放列表，已按单项加入");
@@ -1122,7 +1237,7 @@ namespace YamaBiliDanmakuV3
         return;
       }
 
-      if (_totalPages > 1 && IsVcridPlaybackUrl(GetUrlString(result.Url)))
+      if (preserveCurrentList)
       {
         _loading = false;
         _syncedManifestLoadPending = false;
@@ -1133,7 +1248,6 @@ namespace YamaBiliDanmakuV3
       _loading = false;
       _syncedManifestLoadPending = false;
       _lastManifestSourceUrl = result.Url;
-      ParsePagesJson(result.Result);
       if (_useUnifiedQueue && _syncedManifestActive && _syncedManifestMode == ManifestModeBilibiliMixed)
       {
         ActivateSyncedBiliManifestFromParsed();
@@ -1156,43 +1270,19 @@ namespace YamaBiliDanmakuV3
     public override void OnStringLoadError(IVRCStringDownload result)
     {
       if (!AcceptPagesDownload(result.Url)) return;
-      string resultUrl = GetUrlString(result.Url);
-      if (!string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) && resultUrl == _pendingNeteaseMetadataUrl)
-      {
-        _pendingNeteaseMetadataUrl = "";
-        _pendingNeteaseMetadataIndex = -1;
-        if (_useUnifiedQueue && _completeUnifiedRequestAfterMetadata)
-        {
-          _completeUnifiedRequestAfterMetadata = false;
-          CompleteUnifiedRequest();
-          return;
-        }
-        InvalidatePagesDownloads();
-        SetStatus("歌曲信息读取失败 " + result.ErrorCode);
-        return;
-      }
-
-      if (resultUrl != _lastRequestUrl) return;
-      _loading = false;
-      _syncedManifestLoadPending = false;
-      if (_useUnifiedQueue && _unifiedRequestMode != RequestModeNone)
-      {
-        CompleteUnifiedRequestWithRawFallback("解析失败，已按单项加入");
-        return;
-      }
-      InvalidatePagesDownloads();
-      SetStatus("列表加载失败 " + result.ErrorCode);
+      if (SchedulePagesRetry(result.Url, _downloadIsMetadata, "", result.ErrorCode)) return;
+      FinishPagesDownloadFailure("列表或歌曲信息读取失败，已保留原链接 " + result.ErrorCode);
     }
 
-    private void ParsePagesJson(string json)
+    private bool ParsePagesJson(string json)
     {
       if (string.IsNullOrEmpty(json))
       {
         SetStatus("播放列表为空");
-        return;
+        return false;
       }
 
-      if (ParsePagesMetadata(json)) return;
+      if (ParsePagesMetadata(json)) return true;
 
       bool preserveBiliPage = _useUnifiedQueue && _biliMixedManifestMode && _biliManifestTotalPages > 0;
       int preservedPageOffset = _pageOffset;
@@ -1200,17 +1290,18 @@ namespace YamaBiliDanmakuV3
       if (!VRCJson.TryDeserializeFromJson(json, out DataToken rootToken) || rootToken.TokenType != TokenType.DataDictionary)
       {
         SetStatus("播放列表解析失败");
-        return;
+        return false;
       }
 
       DataDictionary root = rootToken.DataDictionary;
       if (!root.TryGetValue("pages", TokenType.DataList, out DataToken pagesToken))
       {
         SetStatus("没有找到播放项目");
-        return;
+        return false;
       }
 
       DataList pages = pagesToken.DataList;
+      if (pages.Count == 0) return false;
       bool isNetease = false;
       bool isNeteaseSong = false;
       bool isNeteasePlaylistManifest = false;
@@ -1325,6 +1416,7 @@ namespace YamaBiliDanmakuV3
         : Mathf.Max(0, (_selectedIndex / VisibleButtonCount) * VisibleButtonCount);
       SetStatus(count > 0 ? "已加载 " + count + " 项" : "播放列表为空");
       UpdateLabels();
+      return true;
     }
 
     private void ResetParsedSource()
@@ -2926,7 +3018,8 @@ namespace YamaBiliDanmakuV3
     {
       if (string.IsNullOrEmpty(url)) return true;
       string lower = url.ToLower();
-      return lower.EndsWith("/player/?url=") || lower.EndsWith("/player/?__dm=1&url=") || lower.EndsWith("/api/pages?url=");
+      return (lower.IndexOf("/player/?") >= 0 && (lower.EndsWith("?url=") || lower.EndsWith("&url="))) ||
+             lower.EndsWith("/api/pages?url=");
     }
 
     private string GetUrlString(VRCUrl url)
@@ -3922,44 +4015,90 @@ namespace YamaBiliDanmakuV3
       return Mathf.RoundToInt((float)token.Number);
     }
 
+    private string ExtractPagesMetadataHeader(string raw)
+    {
+      if (string.IsNullOrEmpty(raw)) return "";
+      int marker = raw.IndexOf("#YBDM/1", 0, Mathf.Min(raw.Length, 4096));
+      if (marker < 0) return "";
+      // Read only complete header lines, never split/copy the potentially 100k-row TSV body.
+      int limit = marker + Mathf.Min(raw.Length - marker, 2097152);
+      int end = marker;
+      int cursor = marker;
+      int lines = 0;
+      while (cursor < limit && lines < 8192)
+      {
+        char first = raw[cursor];
+        if (first == '\r' || first == '\n')
+        {
+          cursor++;
+          end = cursor;
+          continue;
+        }
+        if (first != '#') break;
+        while (cursor < limit && raw[cursor] != '\r' && raw[cursor] != '\n') cursor++;
+        if (cursor == limit && limit < raw.Length) break;
+        end = cursor;
+        lines++;
+      }
+      return raw.Substring(marker, end - marker).Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
+    private string GetPagesHeaderField(string header, string key)
+    {
+      string prefix = "\n#" + key + "=";
+      int start = header.IndexOf(prefix);
+      if (start < 0) return "";
+      start += prefix.Length;
+      int end = header.IndexOf('\n', start);
+      return header.Substring(start, (end < 0 ? header.Length : end) - start);
+    }
+
     private bool ParsePagesMetadata(string raw)
     {
-      if (string.IsNullOrEmpty(raw)) return false;
-
-      int marker = raw.IndexOf("#YBDM/1");
-      if (marker < 0) return false;
+      string header = ExtractPagesMetadataHeader(raw);
+      if (string.IsNullOrEmpty(header)) return false;
 
       bool preserveBiliPage = _useUnifiedQueue && _biliMixedManifestMode && _biliManifestTotalPages > 0;
       int preservedPageOffset = _pageOffset;
 
-      _isNeteasePlaylist = false;
-      _parsedShouldCycle = false;
-      if (!_useUnifiedQueue && Utilities.IsValid(_danmakuModule)) _danmakuModule.SetExternalAudioMode(false);
-      string[] lines = raw.Substring(marker).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+      string[] lines = header.Split('\n');
       int itemCount = 0;
       int selectedPage = 1;
+      bool hasSelectedPage = false;
       int fallbackVcrid = 0;
       string title = "";
       string fallbackPart = "";
-      _parsedIsBilibiliList = false;
+      bool isBilibiliList = false;
+      bool isNetease = false;
+      bool shouldCycle = false;
 
       for (int i = 0; i < lines.Length; i++)
       {
         string line = lines[i];
         if (line.StartsWith("#page_item=") || line.StartsWith("#list_item=")) itemCount++;
-        else if (line.StartsWith("#page=")) selectedPage = ParseIntString(line.Substring(6), selectedPage);
-        else if (line.StartsWith("#vcrid=")) fallbackVcrid = ParseIntString(line.Substring(8), 0);
+        else if (line.StartsWith("#page="))
+        {
+          selectedPage = ParseIntString(line.Substring(6), selectedPage);
+          hasSelectedPage = true;
+        }
+        else if (line.StartsWith("#vcrid=")) fallbackVcrid = ParseIntString(line.Substring(7), 0);
         else if (line.StartsWith("#title=")) title = UnescapeField(line.Substring(7));
         else if (line.StartsWith("#part=")) fallbackPart = UnescapeField(line.Substring(6));
-        else if (line == "#manifest_type=bilibili-list") _parsedIsBilibiliList = true;
+        else if (line == "#manifest_type=bilibili-list") isBilibiliList = true;
         else if (line == "#manifest_type=netease-playlist")
         {
-          _isNeteasePlaylist = true;
-          _parsedShouldCycle = true;
+          isNetease = true;
+          shouldCycle = true;
         }
-        else if (line == "#provider=netease" || line.StartsWith("#manifest_type=netease")) _isNeteasePlaylist = true;
+        else if (line == "#provider=netease" || line.StartsWith("#manifest_type=netease")) isNetease = true;
       }
 
+      if (itemCount == 0 && (fallbackVcrid <= 0 || (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(fallbackPart)))) return false;
+      _parsedIsBilibiliList = isBilibiliList;
+      _isNeteasePlaylist = isNetease;
+      _parsedShouldCycle = shouldCycle;
+      _needsNeteaseSongMetadata = false;
+      if (!_useUnifiedQueue && Utilities.IsValid(_danmakuModule)) _danmakuModule.SetExternalAudioMode(isNetease);
       int count = Mathf.Min(Mathf.Max(itemCount, 1), 4096);
       _parts = new string[count];
       _playUrls = new string[count];
@@ -4003,7 +4142,8 @@ namespace YamaBiliDanmakuV3
         _playUrls[cursor] = "";
         _danmakuUrls[cursor] = "";
         _vcrids[cursor] = vcrid;
-        if (page == selectedPage) _selectedIndex = cursor;
+        if ((hasSelectedPage && page == selectedPage) ||
+            (!hasSelectedPage && vcrid > 0 && vcrid == fallbackVcrid)) _selectedIndex = cursor;
         cursor++;
       }
 
@@ -4085,8 +4225,7 @@ namespace YamaBiliDanmakuV3
       int urlParameter = lower.IndexOf("url=");
       if (pageApi >= 0 && urlParameter >= 0 && urlParameter + 4 < url.Length) return true;
 
-      int vcridParameter = lower.IndexOf("/player/?vcrid=");
-      return vcridParameter >= 0 && vcridParameter + 16 < url.Length;
+      return !string.IsNullOrEmpty(GetPlayerParameterValue(url, "url")) || IsVcridPlaybackUrl(url);
     }
 
     private bool IsDirectPagesApiUrl(string url)
@@ -4096,7 +4235,29 @@ namespace YamaBiliDanmakuV3
 
     private bool IsVcridPlaybackUrl(string url)
     {
-      return !string.IsNullOrEmpty(url) && url.ToLower().IndexOf("/player/?vcrid=") >= 0;
+      return !string.IsNullOrEmpty(GetPlayerParameterValue(url, "vcrid"));
+    }
+
+    private string GetPlayerParameterValue(string url, string parameter)
+    {
+      if (string.IsNullOrEmpty(url)) return "";
+      string lower = url.ToLower();
+      int player = lower.IndexOf("/player/?");
+      if (player < 0) return "";
+      int start = player + 9;
+      string key = parameter + "=";
+      if (lower.IndexOf(key, start) != start)
+      {
+        start = lower.IndexOf("&" + key, start);
+        if (start < 0) return "";
+        start++;
+      }
+      start += key.Length;
+      int end = url.IndexOf('&', start);
+      int fragment = url.IndexOf('#', player);
+      if (fragment >= 0 && fragment < start) return "";
+      if (fragment >= 0 && (end < 0 || fragment < end)) end = fragment;
+      return url.Substring(start, (end < 0 ? url.Length : end) - start);
     }
 
     private bool IsManifestSourceRequestUrl(string url)
@@ -4107,8 +4268,7 @@ namespace YamaBiliDanmakuV3
       int pagesApi = lower.IndexOf("/api/pages");
       if (pagesApi >= 0) return true;
 
-      int playerUrl = lower.IndexOf("/player/?url=");
-      return playerUrl >= 0 && playerUrl + 13 < url.Length;
+      return !string.IsNullOrEmpty(GetPlayerParameterValue(url, "url"));
     }
 
     private bool SelectManifestItemFromUrl(string url)
@@ -4330,6 +4490,13 @@ namespace YamaBiliDanmakuV3
       QueuePagesDownload(metadataUrl, true);
     }
 
+    public VRCUrl GetVcridUrl(int id)
+    {
+      if (id <= 0 || id > 1000000 || id > _vcridMax || _vcridUrls == null || id >= _vcridUrls.Length) return VRCUrl.Empty;
+      VRCUrl url = _vcridUrls[id];
+      return VRCUrl.IsNullOrEmpty(url) ? VRCUrl.Empty : url;
+    }
+
     public void CheckUnifiedMetadataTimeout()
     {
       if (!_requestActive || string.IsNullOrEmpty(_pendingNeteaseMetadataUrl) || _metadataRequestStartedAt < 0f) return;
@@ -4344,30 +4511,20 @@ namespace YamaBiliDanmakuV3
         SendCustomEventDelayedSeconds(nameof(CheckUnifiedMetadataTimeout), remaining);
         return;
       }
-      _pendingNeteaseMetadataUrl = "";
-      _pendingNeteaseMetadataIndex = -1;
-      if (_useUnifiedQueue && _completeUnifiedRequestAfterMetadata)
-      {
-        _completeUnifiedRequestAfterMetadata = false;
-        CompleteUnifiedRequest();
-      }
-      else
-      {
-        InvalidatePagesDownloads();
-        SetStatus("歌曲信息读取超时");
-      }
+      if (SchedulePagesRetry(_downloadRequestUrl, true, "", 0)) return;
+      FinishPagesDownloadFailure("歌曲信息读取超时，已保留列表");
     }
 
     private void ApplyNeteaseSongMetadata(string raw, int index)
     {
       if (index < 0 || index >= _parts.Length || string.IsNullOrEmpty(raw)) return;
 
-      int marker = raw.IndexOf("#YBDM/1");
-      if (marker < 0) return;
+      string header = ExtractPagesMetadataHeader(raw);
+      if (string.IsNullOrEmpty(header)) return;
 
       string title = "";
       string artist = "";
-      string[] lines = raw.Substring(marker).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+      string[] lines = header.Split('\n');
       for (int i = 0; i < lines.Length; i++)
       {
         string line = lines[i];

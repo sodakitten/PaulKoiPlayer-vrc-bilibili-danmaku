@@ -29,11 +29,14 @@ namespace YamaBiliDanmakuV3.Editor
         string prefix = prefixProperty == null ? "" : prefixProperty.stringValue;
         int max = maxProperty == null ? 0 : maxProperty.intValue;
 
-        if (string.IsNullOrEmpty(prefix) || max < 1)
+        if (string.IsNullOrEmpty(prefix) || max < 1 || max > 1000000)
         {
-          Debug.LogError("Yama Bili Pages: VCRID catalog configuration is invalid.", playlist);
-          continue;
+          throw new BuildFailedException("PaulKoiPlayer: VCRID catalog must contain IDs 1..1000000 only.");
         }
+
+        // Existing scenes acquire the new reference without rebuilding their UI.
+        YamaBiliDanmakuModule3 module = serialized.FindProperty("_danmakuModule").objectReferenceValue as YamaBiliDanmakuModule3;
+        if (module != null) module.SetProgramVariable("_pagesPlaylist", playlist);
 
         string key = prefix + "\n" + max;
         if (!catalogs.TryGetValue(key, out VRCUrl[] urls))

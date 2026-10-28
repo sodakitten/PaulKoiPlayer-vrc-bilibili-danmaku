@@ -6,15 +6,17 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+> **YamaPlayer 纯净版：默认 V2（2026-10-28）**：增加长视频全量弹幕，新建插件默认使用 `__pkdm=2`，已有世界配置保留并可用菜单升级。维护者已确认测试并授权原包发布；其他适配器、后端代码和生产配置均不变。[下载本次前端包](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/yamaplayer-clean-v2-20261028) · [安装与回退](docs/FRONTEND_BACKEND_SYNC_20261028.md)。下方旧版本信息保留用于追溯。
+
 [vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) 是 **PaulKoiPlayer** 的 VRChat 哔哩哔哩弹幕组件，为 VRChat 世界视频播放器提供哔哩哔哩弹幕加载、同步与渲染功能。
 
 示例世界：[https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-YamaPlayer PC / 桌面端当前正式稳定版为 **1.11**，由 `alpha1.1` 原样晋升并发布到 GitHub。本次 1.11 Release **只包含 YamaPlayer PC / 桌面端适配包**；iwaSync3 和 VizVid 保持当前公开版本。Android / Quest 普通大屏或非可拾取播放器继续使用 **1.03**；Android / Quest 可拾取平板场景继续使用独立的 `YamaBiliDanmakuTabletV3` 平板包。
+YamaPlayer PC / 桌面端最新前端包为上方的 **2026-10-28 纯净版（默认 V2）**，以独立日期标签发布，不替换历史 **1.11** 正式附件。iwaSync3 和 VizVid 保持当前公开版本。Android / Quest 普通大屏或非可拾取播放器继续使用 **1.03**；Android / Quest 可拾取平板场景继续使用独立的 `YamaBiliDanmakuTabletV3` 平板包。
 
 > 本项目不是 VRChat、哔哩哔哩或 YamaPlayer 的官方组件。
 
-> **当前 main 前端源码是 `1.11-frontend-fix-alpha1.0` 测试版，不是正式稳定包。** [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) 新增普通黑白和黑金两个测试 ZIP；原正式附件与标签保留不变。本测试仅处理异步回调安全和应用皮肤时的配置保留，后端无需升级。尚未通过 Unity/UdonSharp 编译和 VRChat 实机验收，详见[测试版说明](docs/FRONTEND_FIX_ALPHA1.0.md)。
+> **历史基线：`1.11-frontend-fix-alpha1.0`。** [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) 中的普通黑白、黑金测试 ZIP 以及原正式附件和标签保留不变，详见[历史测试版说明](docs/FRONTEND_FIX_ALPHA1.0.md)。当前 main 的 YamaPlayer 前端已更新为 2026-10-28 纯净版，不再等同于这些旧包。
 
 ## 使用前需要安装
 
@@ -26,10 +28,10 @@ YamaPlayer PC / 桌面端当前正式稳定版为 **1.11**，由 `alpha1.1` 原�
 - TextMeshPro：Unity 项目中需要已导入 TMP Essentials。
 - Docker：只在你要自行部署 `server/` 后端时需要；只使用公开解析服务时不需要。
 
-如果不想自行部署后端，可以直接使用已经部署好的公共服务。在 `Bili URL Prefix Helper` 的 `Url Prefix` 中填写：
+如果不想自行部署后端，可以直接使用已经部署好的公共服务。本次纯净版新建插件的 `Bili URL Prefix Helper > Url Prefix` 默认值为：
 
 ```text
-https://danmaku.paulkoishi.com/player/?url=
+https://danmaku.paulkoishi.com/player/?__pkdm=2&url=
 ```
 
 公共服务状态页：[https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/)。如果该页面无法访问，说明当前公共服务不可用。
@@ -55,12 +57,14 @@ https://danmaku.paulkoishi.com/player/?url=
 
 ## 下载
 
-当前本地包与公开包状态：
+最新前端包与历史附件：
+
+- [PaulKoiPlayer-YamaPlayer-Clean-V2-Default-20261028.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/yamaplayer-clean-v2-20261028/PaulKoiPlayer-YamaPlayer-Clean-V2-Default-20261028.zip)：维护者测试后原样发布的 YamaPlayer PC / 桌面端纯净源码包，默认 V2；不含后端及其他播放器适配器。[发布说明与校验值](docs/RELEASE_YAMAPLAYER_CLEAN_V2_20261028.md)。
 
 - [1.11-frontend-fix-alpha1.0.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0.zip)：普通黑白前端测试源码包。
 - [1.11-frontend-fix-alpha1.0-black-gold.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0-black-gold.zip)：黑金前端测试源码包；保留正式黑金视觉，与普通测试包使用同一组修复。
 
-- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`：当前 YamaPlayer PC / 桌面端正式源码包及 GitHub v1.11 Release 资产，由 `alpha1.1` 原样晋升；包含 YamaPlayer 1.5.18 Top/Bottom URL Input 精确自动定位，并将弹幕/歌词根 Canvas Order 设为 `-1`，避免与 YamaPlayer 点击后出现的 Order `0` 灰色交互 UI 同级竞争。
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`：历史 YamaPlayer PC / 桌面端正式源码包及 GitHub v1.11 Release 资产，由 `alpha1.1` 原样晋升；包含 YamaPlayer 1.5.18 Top/Bottom URL Input 精确自动定位，并将弹幕/歌词根 Canvas Order 设为 `-1`，避免与 YamaPlayer 点击后出现的 Order `0` 灰色交互 UI 同级竞争。
 - `alpha1.1.zip`：正式 1.11 的逐字节晋升来源包，继续保留用于追溯。
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`：上一版金黑 UI 正式包。
 - `beta14.02.zip`：当前金黑测试包；保留 beta14.01 的全部金黑视觉和 URL Input 自动定位，同样只把弹幕/歌词根 Canvas Order 从 `0` 调为 `-1`。
@@ -68,7 +72,7 @@ https://danmaku.paulkoishi.com/player/?url=
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`：VizVid PC / 桌面端源码包。
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`：YamaPlayer Android / Quest 可拾取平板专用包。
 
-服务端当前为 v1.11，部署包在 v1.11 Release 中；本次前端测试没有修改后端或协议，无需重新部署。
+后端独立发布于 [v1.2 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.2)，本次不修改后端代码、附件或生产配置。前端默认请求 V2 不会自动开启服务器的 `BILIBILI_METADATA_V2_ENABLED`；服务器开关关闭时继续兼容旧完整响应。
 
 ### Android / Quest 使用说明
 
@@ -102,15 +106,15 @@ Android / Quest 普通大屏、固定屏幕或非可拾取播放器继续使用 
 - 你使用的目标播放器：YamaPlayer、iwaSync3 或 VizVid
 - 一个能够返回 `#YBDM/1` 文本弹幕的解析服务
 
-默认解析服务前缀：
+本次纯净版新建插件的默认解析服务前缀（旧正式附件不变）：
 
 ```text
-https://danmaku.paulkoishi.com/player/?url=
+https://danmaku.paulkoishi.com/player/?__pkdm=2&url=
 ```
 
 ## 安装
 
-1. YamaPlayer PC / 桌面端使用本地 `1.11.zip`；iwaSync3 和 VizVid 继续使用各自当前版本。
+1. YamaPlayer PC / 桌面端使用上方最新纯净 ZIP，并先阅读[安装与旧世界升级步骤](docs/FRONTEND_BACKEND_SYNC_20261028.md)；iwaSync3 和 VizVid 继续使用各自当前版本。
 2. 删除旧版目录：
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`

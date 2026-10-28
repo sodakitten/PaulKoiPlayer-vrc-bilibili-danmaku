@@ -17,6 +17,7 @@ namespace YamaBiliDanmakuV3
     [Header("Loading")]
     [SerializeField] private bool _loadFromCurrentYamaPlayerUrl = true;
     [SerializeField] private VRCUrl _fallbackDanmakuUrl = VRCUrl.Empty;
+    [SerializeField] private YamaBiliPagesPlaylist3 _pagesPlaylist;
     [SerializeField] private TextMeshProUGUI _statusText;
     [SerializeField] private TextMeshProUGUI _displayAreaButtonLabel;
     [SerializeField] private TextMeshProUGUI _danmakuToggleButtonLabel;
@@ -37,7 +38,6 @@ namespace YamaBiliDanmakuV3
     [SerializeField] private bool _dropDanmakuWhenLanesAreFull = true;
     [SerializeField, Range(0f, 0.5f)] private float _laneSpawnSlackSeconds = 0.05f;
     [SerializeField, Range(-5000, 5000)] private int _timeOffsetMs = 0;
-    [SerializeField, Range(64, 4096)] private int _maxDanmakuLines = 4096;
 
     [Header("Display Area")]
     [Tooltip("0 = full screen, 1 = upper half, 2 = upper quarter anti-blocking area.")]
@@ -80,6 +80,52 @@ namespace YamaBiliDanmakuV3
     private VRCUrl _pendingDownloadUrl = VRCUrl.Empty;
     private string _requestPlaybackUrl = "";
     private bool _requestAudioMode;
+    private VRCUrl _requestDanmakuUrl = VRCUrl.Empty;
+    private int _pendingDownloadEpoch;
+    private float _nextDownloadAt;
+    private bool _metadataFollowed;
+    private bool _requestRequiresV2;
+    private int _retryCount;
+    private bool _retryPending;
+    private int _retryEpoch;
+    private string _retryUrl = "";
+    private float _retryDueAt;
+
+    // Scan twice: validate the entire response/count real rows, then decode.
+    // No partial timeline becomes visible, and neither pass splits the payload.
+    private const int ParseCharactersPerFrame = 8192;
+    private const int ParseLinesPerFrame = 128;
+    private string _parseText = "";
+    private string _parseUrl = "";
+    private int _parseEpoch;
+    private int _parsePhase;
+    private int _parseLastFrame = -1;
+    private int _parsePosition;
+    private int _parseStart;
+    private int _parseEnd;
+    private int _parseLineStart;
+    private int[] _parseTabs = new int[5];
+    private int _parseTabCount;
+    private int _parseRows;
+    private int _parseRenderableRows;
+    private bool _parseHtml;
+    private bool _parseHtmlClosed;
+    private bool _parseComplete;
+    private int _parseCompleteFlag = -1;
+    private bool _parseMetadata;
+    private bool _parseIncomplete;
+    private bool _parseHasError;
+    private bool _parsePermanent;
+    private int _parseExpectedCount = -1;
+    private int _parseVcrid;
+    private string _parseProvider = "";
+    private int _parseRetryAfter = -1;
+    private bool _parseDecoding;
+    private int _parseContentPosition;
+    private int _parseContentEnd;
+    private char[] _parseContentBuffer = new char[0];
+    private int _parseContentLength;
+    private bool _parseEscapePending;
 
     private bool[] _poolActive = new bool[0];
     private RectTransform[] _poolRects = new RectTransform[0];
@@ -112,10 +158,13 @@ namespace YamaBiliDanmakuV3
     private void Update()
     {
       UpdateStatusVisibility();
-      if (!Utilities.IsValid(_controller)) return;
-
-      if (_requestedForPlayback && _requestPlaybackUrl != GetUrlString(GetCurrentYamaPlayerUrl()))
+      if (_requestedForPlayback && !IsDanmakuRequestCurrent())
         ResetDanmaku();
+
+      RetryDanmakuDownload();
+      StartPendingDanmakuDownload();
+      TickDanmakuParser();
+      if (!Utilities.IsValid(_controller)) return;
 
       if (_controller.Stopped)
       {
@@ -171,9 +220,10 @@ namespace YamaBiliDanmakuV3
 
     public void LoadCurrentTrackDanmaku()
     {
+      BeginDanmakuRequest();
       if (!_loadFromCurrentYamaPlayerUrl)
       {
-        LoadFallbackDanmaku();
+        QueueFallbackDanmaku();
         return;
       }
 
@@ -181,7 +231,7 @@ namespace YamaBiliDanmakuV3
       if (VRCUrl.IsNullOrEmpty(currentUrl))
       {
         SetStatus("no current url");
-        LoadFallbackDanmaku();
+        QueueFallbackDanmaku();
         return;
       }
 
@@ -192,6 +242,12 @@ namespace YamaBiliDanmakuV3
     }
 
     public void LoadFallbackDanmaku()
+    {
+      BeginDanmakuRequest();
+      QueueFallbackDanmaku();
+    }
+
+    private void QueueFallbackDanmaku()
     {
       if (VRCUrl.IsNullOrEmpty(_fallbackDanmakuUrl))
       {
@@ -212,7 +268,7 @@ namespace YamaBiliDanmakuV3
         return;
       }
 
-      ResetDanmaku();
+      BeginDanmakuRequest();
       _lastLoadWasCurrentUrl = false;
       _triedFallbackAfterCurrentUrl = false;
       _requestedForPlayback = true;
@@ -321,22 +377,17 @@ namespace YamaBiliDanmakuV3
     public override void OnStringLoadSuccess(IVRCStringDownload result)
     {
       if (!AcceptDanmakuDownload(result.Url)) return;
-      string body = ExtractDanmakuBlock(result.Result);
-      if (string.IsNullOrEmpty(body))
-      {
-        if (TryLoadFallbackAfterCurrentUrl("no #YBDM block")) return;
-        SetStatus("no #YBDM block");
-        return;
-      }
-
-      ParseDanmaku(body);
+      ParseDanmaku(result.Result);
     }
 
     public override void OnStringLoadError(IVRCStringDownload result)
     {
       if (!AcceptDanmakuDownload(result.Url)) return;
       if (TryLoadFallbackAfterCurrentUrl("load error " + result.ErrorCode)) return;
-      SetStatus("load error " + result.ErrorCode);
+      // Result is not guaranteed on SDK errors. Backend status envelopes arrive
+      // through HTTP 200; transport failures use the documented ErrorCode only.
+      ScheduleDanmakuRetry("load error " + result.ErrorCode,
+        result.ErrorCode != 403 && result.ErrorCode != 404, -1);
     }
 
     private string GetUrlString(VRCUrl url)
@@ -344,14 +395,31 @@ namespace YamaBiliDanmakuV3
       return VRCUrl.IsNullOrEmpty(url) ? "" : url.Get();
     }
 
-    private void BeginDanmakuDownload(VRCUrl url)
+    private void BeginDanmakuRequest()
     {
-      _requestEpoch++;
+      ResetDanmaku();
       _requestPlaybackUrl = GetUrlString(GetCurrentYamaPlayerUrl());
       _requestAudioMode = _externalAudioMode;
       _requestedForPlayback = true;
+    }
+
+    private void BeginDanmakuDownload(VRCUrl url)
+    {
+      if (IsMetadataV2Url(url)) _requestRequiresV2 = true;
+      _requestDanmakuUrl = url;
       _pendingDownloadUrl = url;
+      _pendingDownloadEpoch = _requestEpoch;
       StartPendingDanmakuDownload();
+    }
+
+    private bool IsMetadataV2Url(VRCUrl url)
+    {
+      string value = GetUrlString(url);
+      int marker = value.IndexOf("?__pkdm=2");
+      if (marker < 0) marker = value.IndexOf("&__pkdm=2");
+      if (marker < 0) return false;
+      int end = marker + 9;
+      return end == value.Length || value[end] == '&' || value[end] == '#';
     }
 
     private bool IsDanmakuRequestCurrent()
@@ -365,16 +433,19 @@ namespace YamaBiliDanmakuV3
     private void StartPendingDanmakuDownload()
     {
       if (_downloadInFlight || VRCUrl.IsNullOrEmpty(_pendingDownloadUrl)) return;
+      if (_pendingDownloadEpoch != _requestEpoch) return;
       if (!IsDanmakuRequestCurrent())
       {
         ResetDanmaku();
         return;
       }
+      if (Time.time < _nextDownloadAt) return;
       VRCUrl url = _pendingDownloadUrl;
       _pendingDownloadUrl = VRCUrl.Empty;
       _downloadUrl = GetUrlString(url);
       _downloadEpoch = _requestEpoch;
       _downloadInFlight = true;
+      _nextDownloadAt = Time.time + 5f;
       VRCStringDownloader.LoadUrl(url, (IUdonEventReceiver)this);
     }
 
@@ -401,9 +472,50 @@ namespace YamaBiliDanmakuV3
       if (!_lastLoadWasCurrentUrl || _triedFallbackAfterCurrentUrl || VRCUrl.IsNullOrEmpty(_fallbackDanmakuUrl)) return false;
 
       _triedFallbackAfterCurrentUrl = true;
+      if (_requestRequiresV2 && !IsMetadataV2Url(_fallbackDanmakuUrl))
+      {
+        SetStatus("danmaku fallback protocol mismatch");
+        return true;
+      }
       SetStatus(reason + ", fallback");
-      LoadFallbackDanmaku();
+      QueueFallbackDanmaku();
       return true;
+    }
+
+    private void ScheduleDanmakuRetry(string reason, bool retryable, int retryAfter)
+    {
+      CancelDanmakuParse();
+      if (!IsDanmakuRequestCurrent()) return;
+      if (!retryable || _retryCount >= 3)
+      {
+        SetStatus(reason + (retryable ? ", retry limit" : ", permanent"));
+        return;
+      }
+      _retryCount++;
+      float backoff = 5f * Mathf.Pow(2f, _retryCount - 1);
+      float wait = Mathf.Max(backoff, retryAfter >= 0 ? retryAfter : 180f);
+      _retryPending = true;
+      _retryEpoch = _requestEpoch;
+      _retryUrl = GetUrlString(_requestDanmakuUrl);
+      _retryDueAt = Time.time + wait;
+      SetStatus(reason + ", retry " + _retryCount + " in " + wait + "s");
+      SendCustomEventDelayedSeconds(nameof(RetryDanmakuDownload), wait);
+    }
+
+    public void RetryDanmakuDownload()
+    {
+      // Delayed events are wakeups only: even an old A->B->A event must obey
+      // the current epoch, URL and deadline, and can consume a retry only once.
+      if (!_retryPending || _retryEpoch != _requestEpoch ||
+          _retryUrl != GetUrlString(_requestDanmakuUrl)) return;
+      if (!IsDanmakuRequestCurrent())
+      {
+        ResetDanmaku();
+        return;
+      }
+      if (Time.time < _retryDueAt) return;
+      _retryPending = false;
+      BeginDanmakuDownload(_requestDanmakuUrl);
     }
 
     private void InitializePool()
@@ -434,6 +546,17 @@ namespace YamaBiliDanmakuV3
     {
       _requestEpoch++;
       _pendingDownloadUrl = VRCUrl.Empty;
+      _requestDanmakuUrl = VRCUrl.Empty;
+      _retryPending = false;
+      _retryCount = 0;
+      _metadataFollowed = false;
+      _requestRequiresV2 = false;
+      CancelDanmakuParse();
+      _timeMs = new int[0];
+      _mode = new int[0];
+      _color = new int[0];
+      _fontSize = new int[0];
+      _content = new string[0];
       _requestPlaybackUrl = "";
       _loaded = false;
       _lineCount = 0;
@@ -471,38 +594,335 @@ namespace YamaBiliDanmakuV3
 
     private void ParseDanmaku(string text)
     {
-      _timeMs = new int[_maxDanmakuLines];
-      _mode = new int[_maxDanmakuLines];
-      _color = new int[_maxDanmakuLines];
-      _fontSize = new int[_maxDanmakuLines];
-      _content = new string[_maxDanmakuLines];
+      CancelDanmakuParse();
+      _loaded = false;
       _lineCount = 0;
+      _nextLine = 0;
+      HideAllTexts();
+      _parseText = text == null ? "" : text;
+      _parseUrl = GetUrlString(_requestDanmakuUrl);
+      _parseEpoch = _requestEpoch;
+      _parsePhase = 1;
+      _parsePosition = 0;
+      _parseEnd = _parseText.Length;
+      _parseRows = 0;
+      _parseRenderableRows = 0;
+      _parseHtml = false;
+      _parseHtmlClosed = false;
+      _parseComplete = false;
+      _parseCompleteFlag = -1;
+      _parseMetadata = false;
+      _parseIncomplete = false;
+      _parseHasError = false;
+      _parsePermanent = false;
+      _parseExpectedCount = -1;
+      _parseVcrid = 0;
+      _parseProvider = "";
+      _parseRetryAfter = -1;
+      SetStatus("reading danmaku");
+    }
 
-      string[] lines = text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
-      for (int i = 0; i < lines.Length && _lineCount < _maxDanmakuLines; i++)
+    private void CancelDanmakuParse()
+    {
+      _parsePhase = 0;
+      _parseText = "";
+      _parseDecoding = false;
+      _parseContentBuffer = new char[0];
+    }
+
+    private void TickDanmakuParser()
+    {
+      if (_parsePhase == 0 || _parseLastFrame == Time.frameCount) return;
+      _parseLastFrame = Time.frameCount;
+      if (_parseEpoch != _requestEpoch || _parseUrl != GetUrlString(_requestDanmakuUrl) ||
+          !IsDanmakuRequestCurrent())
       {
-        string line = lines[i];
-        if (string.IsNullOrEmpty(line) || line.StartsWith("#")) continue;
-
-        string[] parts = line.Split('\t');
-        if (parts.Length < 6) continue;
-
-        int mode = ParseInt(parts[1], 1);
-        int pool = ParseInt(parts[4], 0);
-        if (pool == 2 || mode == 7 || mode == 8 || mode == 9) continue;
-
-        _timeMs[_lineCount] = ParseInt(parts[0], 0);
-        _mode[_lineCount] = mode;
-        _color[_lineCount] = ParseInt(parts[2], 16777215);
-        _fontSize[_lineCount] = ParseInt(parts[3], 25);
-        _content[_lineCount] = UnescapeField(parts[5]);
-        _lineCount++;
+        ResetDanmaku();
+        return;
+      }
+      if (_parsePhase == 1)
+      {
+        FindDanmakuBlock();
+        return;
       }
 
-      _nextLine = 0;
-      _loaded = _lineCount > 0;
-      ClearLaneTimers();
-      SetStatus(_loaded ? "loaded " + _lineCount : "empty danmaku");
+      int characters = 0;
+      int lines = 0;
+      while (_parsePhase >= 2 && characters < ParseCharactersPerFrame && lines < ParseLinesPerFrame)
+      {
+        if (_parseDecoding)
+        {
+          if (_parseContentPosition < _parseContentEnd)
+          {
+            int before = _parseContentPosition;
+            char value = ReadDanmakuContentChar();
+            characters += _parseContentPosition - before;
+            if (_parseEscapePending)
+            {
+              if (value == 'n') value = '\n';
+              else if (value == 'r') value = '\r';
+              else if (value == 't') value = '\t';
+              else if (value != '\\') _parseContentBuffer[_parseContentLength++] = '\\';
+              _parseContentBuffer[_parseContentLength++] = value;
+              _parseEscapePending = false;
+            }
+            else if (value == '\\') _parseEscapePending = true;
+            else _parseContentBuffer[_parseContentLength++] = value;
+            continue;
+          }
+          if (_parseEscapePending) _parseContentBuffer[_parseContentLength++] = '\\';
+          _content[_lineCount++] = new string(_parseContentBuffer, 0, _parseContentLength);
+          _parseContentBuffer = new char[0];
+          _parseDecoding = false;
+          continue;
+        }
+
+        if (_parsePosition >= _parseEnd)
+        {
+          if (_parseLineStart < _parseEnd)
+          {
+            ReadDanmakuLine(_parseEnd);
+            _parseLineStart = _parseEnd;
+            _parseTabCount = 0;
+            lines++;
+            continue;
+          }
+          FinishDanmakuPass();
+          return;
+        }
+
+        char c = _parseText[_parsePosition];
+        if (_parseHtml && c == '<' && MatchesDanmakuText(_parsePosition, "</script>", _parseEnd))
+        {
+          _parseHtmlClosed = true;
+          _parseEnd = _parsePosition;
+          continue;
+        }
+        characters++;
+        if (c == '\r' || c == '\n')
+        {
+          ReadDanmakuLine(_parsePosition);
+          _parseLineStart = ++_parsePosition;
+          _parseTabCount = 0;
+          lines++;
+        }
+        else
+        {
+          if (c == '\t' && _parseTabCount < 5) _parseTabs[_parseTabCount++] = _parsePosition;
+          _parsePosition++;
+        }
+      }
+    }
+
+    private void FindDanmakuBlock()
+    {
+      string open = "<script type=\"application/yama-bili-danmaku\">";
+      int remaining = _parseEnd - _parsePosition;
+      int length = Mathf.Min(remaining, ParseCharactersPerFrame + open.Length);
+      int marker = _parseText.IndexOf("#YBDM/1", _parsePosition, length);
+      int script = _parseText.IndexOf(open, _parsePosition, length);
+      if (script >= 0 && (marker < 0 || script < marker))
+      {
+        _parseHtml = true;
+        _parseStart = script + open.Length;
+      }
+      else if (marker >= 0) _parseStart = marker;
+      else
+      {
+        if (remaining > ParseCharactersPerFrame)
+        {
+          _parsePosition += ParseCharactersPerFrame;
+          return;
+        }
+        CancelDanmakuParse();
+        if (!TryLoadFallbackAfterCurrentUrl("no #YBDM block")) SetStatus("no #YBDM block");
+        return;
+      }
+      _parsePhase = 2;
+      _parsePosition = _parseStart;
+      _parseLineStart = _parseStart;
+      _parseTabCount = 0;
+    }
+
+    private bool MatchesDanmakuText(int start, string value, int end)
+    {
+      if (end - start < value.Length) return false;
+      for (int i = 0; i < value.Length; i++)
+        if (_parseText[start + i] != value[i]) return false;
+      return true;
+    }
+
+    private int ReadDanmakuInteger(int start, int end, int fallback)
+    {
+      // Integers cannot legitimately require an unbounded substring.
+      if (end <= start || end - start > 12) return fallback;
+      return ParseInt(_parseText.Substring(start, end - start), fallback);
+    }
+
+    private void ReadDanmakuLine(int end)
+    {
+      if (end <= _parseLineStart) return;
+      if (_parseText[_parseLineStart] == '#')
+      {
+        if (_parsePhase == 2) ReadDanmakuMetadata(end);
+        return;
+      }
+      if (_parseTabCount < 5) return;
+      int mode = ReadDanmakuInteger(_parseTabs[0] + 1, _parseTabs[1], 1);
+      int pool = ReadDanmakuInteger(_parseTabs[3] + 1, _parseTabs[4], 0);
+      bool renderable = pool != 2 && mode != 7 && mode != 8 && mode != 9;
+      if (_parsePhase == 2)
+      {
+        _parseRows++;
+        if (renderable) _parseRenderableRows++;
+        return;
+      }
+      if (!renderable) return;
+      int timeMs = ReadDanmakuInteger(_parseLineStart, _parseTabs[0], 0);
+      // Backend timelines are sorted; reject a broken timeline instead of making
+      // binary seek silently skip rows. Equal timestamps retain their row order.
+      if (_lineCount > 0 && timeMs < _timeMs[_lineCount - 1])
+      {
+        _lineCount = 0;
+        ScheduleDanmakuRetry("unsorted danmaku", true, _parseRetryAfter);
+        return;
+      }
+      _timeMs[_lineCount] = timeMs;
+      _mode[_lineCount] = mode;
+      _color[_lineCount] = ReadDanmakuInteger(_parseTabs[1] + 1, _parseTabs[2], 16777215);
+      _fontSize[_lineCount] = ReadDanmakuInteger(_parseTabs[2] + 1, _parseTabs[3], 25);
+      _parseContentPosition = _parseTabs[4] + 1;
+      _parseContentEnd = end;
+      _parseContentBuffer = new char[end - _parseContentPosition];
+      _parseContentLength = 0;
+      _parseEscapePending = false;
+      _parseDecoding = true;
+    }
+
+    private void ReadDanmakuMetadata(int end)
+    {
+      // Only short protocol fields are inspected; long titles/headers are scanned
+      // with the same character budget, never copied or split in their entirety.
+      string line = _parseText.Substring(_parseLineStart, Mathf.Min(256, end - _parseLineStart));
+      if (line.StartsWith("#danmaku_status="))
+      {
+        string status = line.Substring(16).Trim();
+        if (status == "complete") _parseComplete = true;
+        else if (status == "metadata") _parseMetadata = true;
+        else if (status == "error") _parseHasError = true;
+        else _parseIncomplete = true; // pending, partial, or an unknown state
+      }
+      else if (line.StartsWith("#error=") && line.Length > 7) _parseHasError = true;
+      else if (line.StartsWith("#danmaku_complete="))
+      {
+        int complete = ParseInt(line.Substring(18).Trim(), -2);
+        if ((complete != 0 && complete != 1) || (_parseCompleteFlag >= 0 && complete != _parseCompleteFlag))
+          _parseIncomplete = true;
+        _parseCompleteFlag = complete;
+      }
+      else if (line.StartsWith("#retryable="))
+      {
+        if (line.Substring(11).Trim() == "0") _parsePermanent = true;
+      }
+      else if (line.StartsWith("#retry_after_seconds="))
+        _parseRetryAfter = Mathf.Max(_parseRetryAfter, ParseInt(line.Substring(21).Trim(), -1));
+      else if (line.StartsWith("#count="))
+      {
+        int count = ParseInt(line.Substring(7).Trim(), -2);
+        if (count < 0 || (_parseExpectedCount >= 0 && count != _parseExpectedCount)) _parseIncomplete = true;
+        _parseExpectedCount = count;
+      }
+      else if (line.StartsWith("#vcrid=")) _parseVcrid = ParseInt(line.Substring(7).Trim(), 0);
+      else if (line.StartsWith("#provider=")) _parseProvider = line.Substring(10).Trim();
+      else if (line.StartsWith("#error_code=") || line.StartsWith("#http_status="))
+      {
+        int code = ParseInt(line.Substring(line.IndexOf('=') + 1).Trim(), 0);
+        if (code == 403 || code == 404)
+        {
+          _parsePermanent = true;
+          _parseHasError = true;
+        }
+      }
+    }
+
+    private char ReadDanmakuContentChar()
+    {
+      char value = _parseText[_parseContentPosition++];
+      if (!_parseHtml || value != '&') return value;
+      int start = _parseContentPosition - 1;
+      if (MatchesDanmakuText(start, "&lt;", _parseContentEnd)) { _parseContentPosition += 3; return '<'; }
+      if (MatchesDanmakuText(start, "&gt;", _parseContentEnd)) { _parseContentPosition += 3; return '>'; }
+      if (MatchesDanmakuText(start, "&amp;", _parseContentEnd)) { _parseContentPosition += 4; return '&'; }
+      if (MatchesDanmakuText(start, "&quot;", _parseContentEnd)) { _parseContentPosition += 5; return '"'; }
+      return value;
+    }
+
+    private void FinishDanmakuPass()
+    {
+      if (_parsePhase == 2)
+      {
+        if ((_parseComplete && (_parseCompleteFlag != 1 || _parseExpectedCount < 0)) ||
+            (_parseMetadata && _parseCompleteFlag != 0) ||
+            (!_parseMetadata && _parseCompleteFlag == 0) || (_parseHtml && !_parseHtmlClosed))
+          _parseIncomplete = true;
+        if (_parseHasError || _parseIncomplete || (_parseComplete && _parseMetadata))
+        {
+          ScheduleDanmakuRetry(_parseHasError ? "danmaku error" : "danmaku incomplete", !_parsePermanent, _parseRetryAfter);
+          return;
+        }
+        if (_parseMetadata)
+        {
+          FollowDanmakuMetadata();
+          return;
+        }
+        if (_parseExpectedCount >= 0 && _parseExpectedCount != _parseRows)
+        {
+          ScheduleDanmakuRetry("danmaku count mismatch", !_parsePermanent, _parseRetryAfter);
+          return;
+        }
+        _timeMs = new int[_parseRenderableRows];
+        _mode = new int[_parseRenderableRows];
+        _color = new int[_parseRenderableRows];
+        _fontSize = new int[_parseRenderableRows];
+        _content = new string[_parseRenderableRows];
+        _parsePhase = 3;
+        _parsePosition = _parseStart;
+        _parseLineStart = _parseStart;
+        _parseTabCount = 0;
+        return;
+      }
+      CancelDanmakuParse();
+      _loaded = true; // A complete zero-row response is a valid empty timeline.
+      int videoMs = Utilities.IsValid(_controller) ? Mathf.RoundToInt(_controller.VideoTime * 1000f) + _timeOffsetMs : 0;
+      SeekLineIndex(videoMs);
+      _lastVideoMs = videoMs;
+      SetStatus(_lineCount > 0 ? "loaded " + _lineCount : "empty danmaku");
+    }
+
+    private void FollowDanmakuMetadata()
+    {
+      CancelDanmakuParse();
+      if (_metadataFollowed || _externalAudioMode ||
+          (!string.IsNullOrEmpty(_parseProvider) && _parseProvider != "bili" && _parseProvider != "bilibili"))
+      {
+        SetStatus("unexpected danmaku metadata");
+        return;
+      }
+      if (!Utilities.IsValid(_pagesPlaylist)) _pagesPlaylist = FindPagesPlaylistInParents();
+      VRCUrl url = Utilities.IsValid(_pagesPlaylist) ? _pagesPlaylist.GetVcridUrl(_parseVcrid) : VRCUrl.Empty;
+      if (VRCUrl.IsNullOrEmpty(url))
+      {
+        SetStatus("danmaku vcrid missing from catalog");
+        return;
+      }
+      if (_requestRequiresV2 && !IsMetadataV2Url(url))
+      {
+        SetStatus("danmaku catalog protocol mismatch");
+        return;
+      }
+      _metadataFollowed = true;
+      SetStatus("loading danmaku vcrid");
+      BeginDanmakuDownload(url);
     }
 
     private void ShowLine(int index)
@@ -782,12 +1202,21 @@ namespace YamaBiliDanmakuV3
     private void SeekLineIndex(int videoMs)
     {
       int target = Mathf.Max(0, videoMs - 300);
-      _nextLine = 0;
-      while (_nextLine < _lineCount && _timeMs[_nextLine] < target)
-      {
-        _nextLine++;
-      }
+      _nextLine = LowerBoundDanmakuTime(target);
       ClearLaneTimers();
+    }
+
+    private int LowerBoundDanmakuTime(int target)
+    {
+      int low = 0;
+      int high = _lineCount;
+      while (low < high)
+      {
+        int middle = low + (high - low) / 2;
+        if (_timeMs[middle] < target) low = middle + 1;
+        else high = middle;
+      }
+      return low;
     }
 
     private void RestoreVisibleDanmakuAt(int videoMs)
@@ -797,7 +1226,7 @@ namespace YamaBiliDanmakuV3
 
       int restoreWindowMs = Mathf.CeilToInt(Mathf.Max(_scrollDuration, _staticDuration) * 1000f);
       int startMs = Mathf.Max(0, videoMs - restoreWindowMs);
-      for (int i = 0; i < _lineCount && _timeMs[i] <= videoMs; i++)
+      for (int i = LowerBoundDanmakuTime(startMs); i < _lineCount && _timeMs[i] <= videoMs; i++)
       {
         if (_timeMs[i] < startMs) continue;
 
@@ -810,11 +1239,7 @@ namespace YamaBiliDanmakuV3
         ShowLineWithAge(i, ageMs / 1000f);
       }
 
-      _nextLine = 0;
-      while (_nextLine < _lineCount && _timeMs[_nextLine] <= videoMs + 120)
-      {
-        _nextLine++;
-      }
+      _nextLine = LowerBoundDanmakuTime(videoMs + 121);
       _lastVideoMs = videoMs;
     }
 
@@ -845,22 +1270,6 @@ namespace YamaBiliDanmakuV3
       for (int i = 0; i < _laneReadyAt.Length; i++) _laneReadyAt[i] = 0f;
     }
 
-    private string ExtractDanmakuBlock(string raw)
-    {
-      if (string.IsNullOrEmpty(raw)) return "";
-
-      int marker = raw.IndexOf("#YBDM/1");
-      if (marker >= 0) return raw.Substring(marker);
-
-      string open = "<script type=\"application/yama-bili-danmaku\">";
-      int start = raw.IndexOf(open);
-      if (start < 0) return "";
-      start += open.Length;
-      int end = raw.IndexOf("</script>", start);
-      if (end < 0) return "";
-      return HtmlDecodeBasic(raw.Substring(start, end - start));
-    }
-
     private string ExtractBiliKey(string input)
     {
       string text = PercentDecodeBasic(input);
@@ -887,31 +1296,11 @@ namespace YamaBiliDanmakuV3
         .Replace("%3D", "=").Replace("%3d", "=");
     }
 
-    private string HtmlDecodeBasic(string input)
-    {
-      if (string.IsNullOrEmpty(input)) return "";
-      return input
-        .Replace("&lt;", "<")
-        .Replace("&gt;", ">")
-        .Replace("&amp;", "&")
-        .Replace("&quot;", "\"");
-    }
-
     private int ParseInt(string value, int fallback)
     {
       int parsed;
       if (int.TryParse(value, out parsed)) return parsed;
       return fallback;
-    }
-
-    private string UnescapeField(string value)
-    {
-      if (string.IsNullOrEmpty(value)) return "";
-      return value
-        .Replace("\\n", "\n")
-        .Replace("\\r", "\r")
-        .Replace("\\t", "\t")
-        .Replace("\\\\", "\\");
     }
 
     private Color ToColor(int rgb)
@@ -957,6 +1346,18 @@ namespace YamaBiliDanmakuV3
       {
         Controller controller = current.GetComponentInChildren<Controller>(true);
         if (Utilities.IsValid(controller)) return controller;
+        current = current.parent;
+      }
+      return null;
+    }
+
+    private YamaBiliPagesPlaylist3 FindPagesPlaylistInParents()
+    {
+      Transform current = transform;
+      while (Utilities.IsValid(current))
+      {
+        YamaBiliPagesPlaylist3 pages = current.GetComponentInChildren<YamaBiliPagesPlaylist3>(true);
+        if (Utilities.IsValid(pages)) return pages;
         current = current.parent;
       }
       return null;

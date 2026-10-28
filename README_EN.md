@@ -6,15 +6,17 @@
 
 [简体中文](README.md) | [English](README_EN.md)
 
+> **YamaPlayer Clean: V2 by default (2026-10-28):** full-length danmaku with `__pkdm=2` enabled by default for newly created plugins. Existing scene settings are preserved and can be upgraded via the editor menu. The maintainer confirmed testing and authorized publication of the unchanged ZIP. Other adapters, backend code, and production configuration are unchanged. [Download this frontend release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/yamaplayer-clean-v2-20261028) · [Integration and rollback guide](docs/FRONTEND_BACKEND_SYNC_20261028.md). Historical release information is retained below.
+
 [vrc-bilibili-danmaku](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku) is the VRChat Bilibili danmaku component for **PaulKoiPlayer**. It provides Bilibili danmaku loading, synchronization, and rendering for video players in VRChat worlds.
 
 Example world: [https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604](https://vrchat.com/home/world/wrld_c57b6e50-c63b-42d2-b30d-b76b0562f604)
 
-The current official stable YamaPlayer PC / desktop release is **1.11**, promoted unchanged from `alpha1.1` and published on GitHub. This 1.11 Release **contains only the YamaPlayer PC / desktop adapter**. The iwaSync3 and VizVid lines remain on their current public versions. Android / Quest fixed screens and non-pickup players continue using **1.03**, while pickup tablets use the separate `YamaBiliDanmakuTabletV3` package.
+The latest YamaPlayer PC / desktop frontend package is **2026-10-28 Clean (V2 by default)** above, published under a separate dated tag without replacing historical **1.11** assets. The iwaSync3 and VizVid lines remain on their current public versions. Android / Quest fixed screens and non-pickup players continue using **1.03**, while pickup tablets use the separate `YamaBiliDanmakuTabletV3` package.
 
 > This is not an official VRChat, Bilibili, or YamaPlayer component.
 
-> **The frontend source on main is now the experimental `1.11-frontend-fix-alpha1.0`, not the stable package.** The [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) includes separate black-white and black-gold test ZIPs; its existing stable assets and tag are unchanged. These frontend-only fixes guard asynchronous callbacks and preserve existing settings when applying a skin. No backend upgrade is required. Unity/UdonSharp compilation and VRChat validation are still pending; see the [test package notes](docs/FRONTEND_FIX_ALPHA1.0.md).
+> **Historical baseline: `1.11-frontend-fix-alpha1.0`.** The [v1.11 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.11) retains its original stable assets, tag, and black-white/black-gold test ZIPs; see the [historical test notes](docs/FRONTEND_FIX_ALPHA1.0.md). The YamaPlayer frontend on main now corresponds to the 2026-10-28 clean release, not those older packages.
 
 ## Required before use
 
@@ -26,10 +28,10 @@ If your VRChat world was created with VCC, the project usually already includes 
 - TextMeshPro: TMP Essentials must be imported in the Unity project.
 - Docker: only required when self-hosting the `server/` backend. It is not required when using an existing public parser service.
 
-If you do not want to self-host the backend, you can use the already deployed public service. Set `Bili URL Prefix Helper > Url Prefix` to:
+If you do not want to self-host the backend, you can use the already deployed public service. Newly created plugins in this clean release default to this `Bili URL Prefix Helper > Url Prefix`:
 
 ```text
-https://danmaku.paulkoishi.com/player/?url=
+https://danmaku.paulkoishi.com/player/?__pkdm=2&url=
 ```
 
 Public service status page: [https://danmaku.paulkoishi.com/](https://danmaku.paulkoishi.com/). If this page cannot be reached, the current public service is unavailable.
@@ -55,12 +57,14 @@ If you self-host this project's `server/` backend, replace the domain with your 
 
 ## Downloads
 
-Current local and public package status:
+Latest frontend package and historical assets:
+
+- [PaulKoiPlayer-YamaPlayer-Clean-V2-Default-20261028.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/yamaplayer-clean-v2-20261028/PaulKoiPlayer-YamaPlayer-Clean-V2-Default-20261028.zip): the maintainer-tested YamaPlayer PC / desktop clean source ZIP, published unchanged with V2 defaults. No backend or other player adapters. [Release notes and checksum](docs/RELEASE_YAMAPLAYER_CLEAN_V2_20261028.md).
 
 - [1.11-frontend-fix-alpha1.0.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0.zip): experimental black-white frontend source package.
 - [1.11-frontend-fix-alpha1.0-black-gold.zip](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.11/1.11-frontend-fix-alpha1.0-black-gold.zip): experimental black-gold frontend source package, retaining the released black-gold visuals with the same fixes.
 
-- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`: current official YamaPlayer PC / desktop source package and GitHub v1.11 Release asset, promoted unchanged from `alpha1.1`. It includes precise YamaPlayer 1.5.18 Top/Bottom URL Input lookup and sets the danmaku/lyrics root Canvas Order to `-1`, preventing competition with YamaPlayer's Order `0` gray interaction UI.
+- `PaulKoiPlayer-YamaBiliDanmakuV3-1.11.zip` / `1.11.zip`: historical official YamaPlayer PC / desktop source package and GitHub v1.11 Release asset, promoted unchanged from `alpha1.1`. It includes precise YamaPlayer 1.5.18 Top/Bottom URL Input lookup and sets the danmaku/lyrics root Canvas Order to `-1`, preventing competition with YamaPlayer's Order `0` gray interaction UI.
 - `alpha1.1.zip`: byte-identical promotion source for the official 1.11 package, retained for traceability.
 - `PaulKoiPlayer-YamaBiliDanmakuV3-1.10.zip`: previous black-gold official package.
 - `beta14.02.zip`: current black-gold test package. It preserves all beta14.01 black-gold visuals and URL Input lookup behavior, changing only the danmaku/lyrics root Canvas Order from `0` to `-1`.
@@ -68,7 +72,7 @@ Current local and public package status:
 - `PaulKoiPlayer-VizVidBiliDanmakuV3-1.04beta.zip`: VizVid PC / desktop source package.
 - `PaulKoiPlayer-YamaBiliDanmakuTabletV3-android-beta1.5.zip`: dedicated YamaPlayer Android / Quest pickup tablet package.
 
-The current backend is v1.11, with its deployment ZIP attached to the v1.11 Release. This frontend experiment changes neither backend code nor the protocol; no redeployment is needed.
+The backend has its own [v1.2 Release](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/tag/v1.2). This frontend release changes no backend code, assets, or production configuration. Sending V2 requests does not enable the server's `BILIBILI_METADATA_V2_ENABLED` flag; when disabled, legacy complete responses remain supported.
 
 ### Android / Quest note
 
@@ -102,15 +106,15 @@ That PC mounting logic caused visibly dimmer danmaku on Android / Quest pickup t
 - The target player used by the imported adapter: YamaPlayer, iwaSync3, or VizVid
 - A parser service that returns danmaku in `#YBDM/1` text format
 
-Default parser prefix:
+Default parser prefix for newly created plugins in this clean release (historical assets are unchanged):
 
 ```text
-https://danmaku.paulkoishi.com/player/?url=
+https://danmaku.paulkoishi.com/player/?__pkdm=2&url=
 ```
 
 ## Installation
 
-1. Use the local `1.11.zip` package for YamaPlayer on PC / desktop. iwaSync3 and VizVid remain on their current versions.
+1. Use the latest clean ZIP above for YamaPlayer on PC / desktop and read the [installation and existing-world upgrade steps](docs/FRONTEND_BACKEND_SYNC_20261028.md). iwaSync3 and VizVid remain on their current versions.
 2. Remove old installations:
    - `Assets/YamaBiliDanmaku`
    - `Assets/YamaBiliDanmakuV2`
