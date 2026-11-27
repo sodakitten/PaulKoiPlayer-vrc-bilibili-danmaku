@@ -1,12 +1,12 @@
-# PaulKoiPlayer 后端 1.2 Docker 部署
+# PaulKoiPlayer 后端 1.3 Docker 部署
 
-正式版本：`1.2`。npm 版本：`1.2.0`。Docker 镜像：`paulkoi-danmaku-server:1.2`。
+Compose 使用 `paulkoi-danmaku-server:1.3` 镜像，npm 版本为 `1.3.0`。
 宿主机只需安装 Docker 和 Docker Compose，不需要安装 Node.js。
 容器包含 Node.js 20，端口映射保持 `7858:3000`。
 
 ## 安装与启动
 
-解压 `vrc-bilibili-danmaku-server-v1.2.zip`，进入包含 `docker-compose.yml` 的目录：
+解压后端安装包并进入包含 `docker-compose.yml` 的目录。[后端 ZIP](https://github.com/sodakitten/PaulKoiPlayer-vrc-bilibili-danmaku/releases/download/v1.3/vrc-bilibili-danmaku-server-v1.3.zip)
 
 ```powershell
 docker compose build
@@ -28,6 +28,14 @@ ADMIN_TOKEN=replace-with-your-own-admin-token
 打开 `/admin`，输入密钥并保存至当前会话。小眼睛可以显示或隐藏密钥；
 刷新页面后需要重新输入。未配置密钥时，管理 API 会关闭。
 `.env` 不属于发布包，也不应提交到 Git。
+
+## 服务数据
+
+公网首页和 `/api/cache/stats` 提供汇总统计。登录管理后台后，在「服务数据」
+查看播放与解析记录，按来源或世界 ID 筛选，也可以查看各世界的请求次数。
+新版 Unity 插件在构建时从场景读取 Blueprint ID，并在播放 URL 里附带
+`__world=wrld_…`。该值由客户端提供，适合使用统计。旧请求和历史记录仍可使用，
+没有携带世界 ID 的记录会留空。管理后台可切换到「自定义视频弹幕」维护视频条目。
 
 ## 自定义视频与弹幕
 
@@ -53,8 +61,9 @@ ADMIN_TOKEN=replace-with-your-own-admin-token
 | `GET /api/danmaku?url=...` | `#YBDM/1` 弹幕；也支持已有的 vcrid 请求 |
 | `GET /api/pages?url=...` | 分 P、列表、音乐歌单或自定义条目清单 |
 | `GET /api/lyrics?url=...` | 按需查询网易云歌词及封面并缓存 |
-| `GET /api/cache/stats` | 缓存及服务统计 |
+| `GET /api/cache/stats` | 缓存及服务汇总统计 |
 | `GET /admin` | 管理页面 |
+| `GET /api/admin/stats` | 需要管理员凭证的服务数据、世界使用情况和播放与解析记录 |
 | `GET/POST/DELETE /api/admin/custom` | 需要管理员凭证的条目管理 |
 
 `/player` 文本模式继续识别 `Accept: text/plain`、已有下载器请求头和 `__dm=1`。

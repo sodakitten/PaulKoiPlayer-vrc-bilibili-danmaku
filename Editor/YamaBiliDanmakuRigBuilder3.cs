@@ -87,38 +87,51 @@ namespace YamaBiliDanmakuV3.Editor
     private static readonly Color UiHighlightedColor = new Color(1f, 1f, 1f, 1f);
     private static readonly Color UiPressedColor = new Color(0.58f, 0.58f, 0.58f, 1f);
 
-    [MenuItem("Yamadev/YamaPlayer/Create Bili Danmaku Module", false, 2000)]
+    [MenuItem("Tools/PaulKoiPlayer/Install Danmaku/YamaPlayer")]
     public static void CreateRig()
     {
-      Controller controller = FindTargetController();
-      if (controller == null)
+      GameObject selected = Selection.activeGameObject;
+      if (!PaulKoiInstallation.CanInstall(selected))
       {
-        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Select a YamaPlayer object, or an object under YamaPlayer that contains a Controller.", "OK");
+        EditorUtility.DisplayDialog("PaulKoiPlayer", "Select a YamaPlayer scene object in Edit Mode.", "OK");
         return;
       }
 
-      Transform parent = ResolveRigParent(controller);
-      GameObject root = BuildRig(controller, parent);
-      if (root == null) return;
-      Undo.RegisterCreatedObjectUndo(root, "Create Bili Danmaku Module");
+      YamaBiliDanmakuModule3 selectedModule = selected.GetComponentInParent<YamaBiliDanmakuModule3>(true);
+      if (selectedModule != null)
+      {
+        PaulKoiInstallation.Select(selectedModule.gameObject);
+        return;
+      }
 
-      Selection.activeObject = root;
-      EditorGUIUtility.PingObject(root);
+      Controller controller = FindTargetController();
+      if (controller == null)
+      {
+        EditorUtility.DisplayDialog("PaulKoiPlayer", "Select the intended YamaPlayer player or its display. The selection must identify one player.", "OK");
+        return;
+      }
+
+      Transform parent = ResolveRigParent(controller) ?? controller.transform;
+      foreach (Transform child in parent)
+      {
+        YamaBiliDanmakuModule3 existing = child.GetComponent<YamaBiliDanmakuModule3>();
+        if (existing != null && existing.GetProgramVariable("_controller") == (object)controller)
+        {
+          PaulKoiInstallation.Select(child.gameObject);
+          return;
+        }
+      }
+
+      PaulKoiInstallation.Install(() => BuildRig(controller, parent), typeof(YamaBiliDanmakuModule3), typeof(YamaBiliUrlPrefixHelper3), typeof(YamaBiliPagesPlaylist3));
     }
 
-    [MenuItem("GameObject/YamaPlayer/Bili Danmaku Module", false, 41)]
-    public static void CreateRigFromGameObjectMenu()
+    [MenuItem("Tools/PaulKoiPlayer/Install Danmaku/YamaPlayer", true)]
+    private static bool ValidateInstall()
     {
-      CreateRig();
+      return PaulKoiInstallation.CanInstall(Selection.activeGameObject);
     }
 
-    [MenuItem("GameObject/YamaPlayer/Bili Danmaku Module", true)]
-    public static bool ValidateCreateRigFromGameObjectMenu()
-    {
-      return FindTargetController() != null;
-    }
-
-    [MenuItem("Yamadev/YamaPlayer/Save Selected Bili Danmaku Module As Prefab", false, 2001)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Save Selected Bili Danmaku Module As Prefab", false, 2001)]
     public static void SaveSelectedAsPrefab()
     {
       GameObject selected = Selection.activeGameObject;
@@ -149,12 +162,13 @@ namespace YamaBiliDanmakuV3.Editor
       EditorGUIUtility.PingObject(prefab);
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Create Package Prefab Asset", false, 2002)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Create Package Prefab Asset", false, 2002)]
     public static void CreatePrefabAsset()
     {
       string path = DefaultPrefabPath;
       EnsureDirectoryForAsset(path);
 
+      PaulKoiInstallation.PreparePrograms(typeof(YamaBiliDanmakuModule3), typeof(YamaBiliUrlPrefixHelper3), typeof(YamaBiliPagesPlaylist3));
       GameObject temp = BuildRig(null, null);
       if (temp == null) return;
       try
@@ -250,28 +264,7 @@ namespace YamaBiliDanmakuV3.Editor
       TextMeshProUGUI urlPrefixToggleButtonLabel;
       CreateOrFindControlsCanvas(root, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
 
-      System.Type moduleType = FindType("YamaBiliDanmakuV3.YamaBiliDanmakuModule3");
-      if (moduleType == null)
-      {
-        EditorUtility.DisplayDialog(
-          "Yama Bili Danmaku",
-          "YamaBiliDanmakuModule3 type was not found. Make sure the Runtime script has compiled successfully, then reimport this package or restart Unity.",
-          "OK");
-        UnityEngine.Object.DestroyImmediate(root);
-        return null;
-      }
-
-      EnsureUdonSharpProgramAsset(moduleType);
-      Component module = AddUdonSharpComponentForType(root, moduleType);
-      if (module == null)
-      {
-        EditorUtility.DisplayDialog(
-          "Yama Bili Danmaku",
-          "Failed to add UdonSharp component. Try creating a U# Program Asset manually from Assets/YamaBiliDanmakuV3/Runtime/YamaBiliDanmakuModule3.cs, then run this menu again.",
-          "OK");
-        UnityEngine.Object.DestroyImmediate(root);
-        return null;
-      }
+      Component module = root.AddUdonSharpComponent<YamaBiliDanmakuModule3>();
 
       Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(root, controller, urlPrefixToggleButtonLabel);
       WireModule(module, controller, laneRoot, status, displayAreaButtonLabel, danmakuToggleButtonLabel, displayAreaButton, danmakuToggleButton, pool);
@@ -285,28 +278,13 @@ namespace YamaBiliDanmakuV3.Editor
 
     private static Component CreateOrFindUrlPrefixHelper(GameObject root, Controller controller, TextMeshProUGUI urlPrefixToggleButtonLabel)
     {
-      System.Type helperType = FindType("YamaBiliDanmakuV3.YamaBiliUrlPrefixHelper3");
-      if (helperType == null)
-      {
-        Debug.LogWarning("Yama Bili Danmaku: YamaBiliUrlPrefixHelper3 type was not found. URL prefix helper was not created.");
-        return null;
-      }
-
-      EnsureUdonSharpProgramAsset(helperType);
-
-      Component helper = root == null ? null : root.GetComponentInChildren(helperType, true);
+      var helper = root.GetComponentInChildren<YamaBiliUrlPrefixHelper3>(true);
       if (helper == null)
       {
         GameObject helperObject = new GameObject("Bili URL Prefix Helper");
+        Undo.RegisterCreatedObjectUndo(helperObject, "Create Bili URL Prefix Helper");
         helperObject.transform.SetParent(root.transform, false);
-
-        helper = AddUdonSharpComponentForType(helperObject, helperType);
-        if (helper == null)
-        {
-          Debug.LogWarning("Yama Bili Danmaku: failed to add Bili URL Prefix Helper.");
-          UnityEngine.Object.DestroyImmediate(helperObject);
-          return null;
-        }
+        helper = helperObject.AddUdonSharpComponent<YamaBiliUrlPrefixHelper3>();
         InitializeNewUrlPrefixHelper(helper);
       }
 
@@ -318,20 +296,12 @@ namespace YamaBiliDanmakuV3.Editor
     {
       if (root == null) return null;
 
-      System.Type playlistType = FindType("YamaBiliDanmakuV3.YamaBiliPagesPlaylist3");
-      if (playlistType == null)
-      {
-        Debug.LogWarning("Yama Bili Danmaku: YamaBiliPagesPlaylist3 type was not found. Pages panel was not created.");
-        return null;
-      }
-
-      EnsureUdonSharpProgramAsset(playlistType);
-
       Transform panelTransform = root.transform.Find(PagesPanelName);
       GameObject panelObject = panelTransform == null ? null : panelTransform.gameObject;
       if (panelObject == null)
       {
         panelObject = new GameObject(PagesPanelName, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        Undo.RegisterCreatedObjectUndo(panelObject, "Create Bili Pages Panel");
         panelObject.transform.SetParent(root.transform, false);
       }
 
@@ -423,10 +393,10 @@ namespace YamaBiliDanmakuV3.Editor
       CreateOrFindSeparator(panelObject, "Navigation Divider 2", new Vector2(210f, -232f), new Vector2(1f, 16f));
       CreateOrFindSeparator(panelObject, "Navigation Divider 3", new Vector2(308f, -232f), new Vector2(1f, 16f));
 
-      Component playlist = panelObject.GetComponent(playlistType);
+      Component playlist = panelObject.GetComponent<YamaBiliPagesPlaylist3>();
       if (playlist == null)
       {
-        playlist = AddUdonSharpComponentForType(panelObject, playlistType);
+        playlist = panelObject.AddUdonSharpComponent<YamaBiliPagesPlaylist3>();
         InitializeNewPagesPlaylist(playlist);
       }
 
@@ -1270,19 +1240,7 @@ namespace YamaBiliDanmakuV3.Editor
 
     private static Controller FindTargetController()
     {
-      GameObject selected = Selection.activeGameObject;
-      if (selected != null)
-      {
-        Transform current = selected.transform;
-        while (current != null)
-        {
-          Controller controller = current.GetComponentInChildren<Controller>(true);
-          if (controller != null) return controller;
-          current = current.parent;
-        }
-      }
-
-      return UnityEngine.Object.FindFirstObjectByType<Controller>(FindObjectsInactive.Include);
+      return PaulKoiInstallation.FindPlayer<Controller>(Selection.activeGameObject);
     }
 
     private static Transform ResolveRigParent(Controller controller)
@@ -1316,75 +1274,6 @@ namespace YamaBiliDanmakuV3.Editor
     }
 
 
-    private static Component AddUdonSharpComponentForType(GameObject gameObject, System.Type moduleType)
-    {
-      if (gameObject == null || moduleType == null) return null;
-
-      // UdonSharp 1.x expects U# behaviours to be added through its editor helper so the
-      // generated Udon C# Program Asset is associated with the C# proxy script. Calling
-      // GameObject.AddComponent(type) can leave the behaviour without a valid program asset.
-      Component added = TryInvokeUdonSharpAddComponent(gameObject, moduleType);
-      if (added != null) return added;
-
-      // Fallback for environments where the helper method name changes. This may still need
-      // manual U# Program Asset repair, but keeps the object creation path usable.
-      try
-      {
-        return gameObject.AddComponent(moduleType);
-      }
-      catch (System.Exception exception)
-      {
-        Debug.LogError("Yama Bili Danmaku: AddComponent failed: " + exception);
-        return null;
-      }
-    }
-
-    private static Component TryInvokeUdonSharpAddComponent(GameObject gameObject, System.Type moduleType)
-    {
-      System.Reflection.Assembly[] assemblies = System.AppDomain.CurrentDomain.GetAssemblies();
-      for (int a = 0; a < assemblies.Length; a++)
-      {
-        System.Type[] types;
-        try { types = assemblies[a].GetTypes(); }
-        catch { continue; }
-
-        for (int t = 0; t < types.Length; t++)
-        {
-          System.Type type = types[t];
-          if (type == null || (type.Namespace != "UdonSharpEditor" && (type.FullName == null || !type.FullName.StartsWith("UdonSharpEditor.")))) continue;
-
-          System.Reflection.MethodInfo[] methods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-          for (int m = 0; m < methods.Length; m++)
-          {
-            System.Reflection.MethodInfo method = methods[m];
-            if (method.Name != "AddUdonSharpComponent" && method.Name != "AddComponent") continue;
-
-            System.Reflection.ParameterInfo[] parameters = method.GetParameters();
-            if (parameters.Length != 2) continue;
-            if (!typeof(GameObject).IsAssignableFrom(parameters[0].ParameterType)) continue;
-            if (!typeof(System.Type).IsAssignableFrom(parameters[1].ParameterType)) continue;
-
-            try
-            {
-              object result = method.Invoke(null, new object[] { gameObject, moduleType });
-              Component component = result as Component;
-              if (component != null)
-              {
-                Debug.Log("Yama Bili Danmaku: Added UdonSharp component via " + type.FullName + "." + method.Name);
-                return component;
-              }
-            }
-            catch (System.Exception exception)
-            {
-              Debug.LogWarning("Yama Bili Danmaku: UdonSharp add helper failed: " + exception.Message);
-            }
-          }
-        }
-      }
-
-      return null;
-    }
-
     private static void EnsureDirectoryForAsset(string assetPath)
     {
       string directory = System.IO.Path.GetDirectoryName(assetPath);
@@ -1403,9 +1292,10 @@ namespace YamaBiliDanmakuV3.Editor
       }
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Wire Selected Bili Danmaku Module", false, 2003)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Wire Selected Bili Danmaku Module", false, 2003)]
     public static void WireSelectedModule()
     {
+      if (!PaulKoiInstallation.CanInstall(Selection.activeGameObject)) return;
       GameObject selected = Selection.activeGameObject;
       if (selected == null)
       {
@@ -1421,6 +1311,7 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       Controller controller = FindTargetController();
+      PaulKoiInstallation.PreparePrograms(typeof(YamaBiliDanmakuModule3), typeof(YamaBiliUrlPrefixHelper3), typeof(YamaBiliPagesPlaylist3));
       RectTransform laneRoot = selected.transform.Find("Danmaku Lanes") as RectTransform;
       TextMeshProUGUI status = null;
       Transform statusTransform = selected.transform.Find("Status");
@@ -1444,7 +1335,7 @@ namespace YamaBiliDanmakuV3.Editor
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "References wired.", "OK");
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Apply Selected Bili Danmaku Visual Style", false, 2005)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Apply Selected Bili Danmaku Visual Style", false, 2005)]
     public static void ApplySelectedVisualStyle()
     {
       GameObject selected = Selection.activeGameObject;
@@ -1465,7 +1356,7 @@ namespace YamaBiliDanmakuV3.Editor
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "Visual style applied.", "OK");
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Create or Wire Selected Pages Panel", false, 2007)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Create or Wire Selected Pages Panel", false, 2007)]
     public static void CreateOrWireSelectedPagesPanel()
     {
       GameObject selected = Selection.activeGameObject;
@@ -1482,13 +1373,14 @@ namespace YamaBiliDanmakuV3.Editor
         return;
       }
 
+      PaulKoiInstallation.PreparePrograms(typeof(YamaBiliDanmakuModule3), typeof(YamaBiliUrlPrefixHelper3), typeof(YamaBiliPagesPlaylist3));
       Controller controller = FindTargetController();
       Component pagesPlaylist = CreateOrFindPagesPlaylist(selected, controller, module);
       WirePagesPlaylist(pagesPlaylist, controller, module);
       EditorUtility.DisplayDialog("Yama Bili Danmaku", "Pages panel wired.", "OK");
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Apply Selected Bili UI Skin", false, 2008)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Apply Selected Bili UI Skin", false, 2008)]
     public static void ApplySelectedUiSkin()
     {
       GameObject selected = Selection.activeGameObject;
@@ -1514,6 +1406,7 @@ namespace YamaBiliDanmakuV3.Editor
       CreateOrFindControlsCanvas(selected, out displayAreaButton, out displayAreaButtonLabel, out danmakuToggleButton, out danmakuToggleButtonLabel, out urlPrefixToggleButton, out urlPrefixToggleButtonLabel);
       ApplyDanmakuCanvasSortingOrder(selected);
 
+      PaulKoiInstallation.PreparePrograms(typeof(YamaBiliDanmakuModule3), typeof(YamaBiliUrlPrefixHelper3), typeof(YamaBiliPagesPlaylist3));
       Controller controller = FindTargetController();
       Component urlPrefixHelper = CreateOrFindUrlPrefixHelper(selected, controller, null);
       WireModuleUrlPrefixControls(module, urlPrefixHelper, null, null);
@@ -1536,7 +1429,7 @@ namespace YamaBiliDanmakuV3.Editor
       EditorUtility.SetDirty(canvas);
     }
 
-    [MenuItem("Yamadev/YamaPlayer/Wire Selected Bili URL Prefix Helper", false, 2004)]
+    [MenuItem("Tools/PaulKoiPlayer/Advanced/YamaPlayer/Wire Selected Bili URL Prefix Helper", false, 2004)]
     public static void WireSelectedUrlPrefixHelper()
     {
       GameObject selected = Selection.activeGameObject;
@@ -1759,7 +1652,8 @@ namespace YamaBiliDanmakuV3.Editor
       if (behaviour == null) return;
 
       EventTrigger trigger = inputField.GetComponent<EventTrigger>();
-      if (trigger == null) trigger = inputField.gameObject.AddComponent<EventTrigger>();
+      if (trigger == null) trigger = Undo.AddComponent<EventTrigger>(inputField.gameObject);
+      Undo.RecordObject(trigger, "Wire PaulKoiPlayer URL input");
       if (trigger.triggers == null) trigger.triggers = new System.Collections.Generic.List<EventTrigger.Entry>();
 
       RemoveEventTriggerEntries(trigger, EventTriggerType.Select);
@@ -1812,7 +1706,8 @@ namespace YamaBiliDanmakuV3.Editor
       }
 
       EventTrigger trigger = inputField.GetComponent<EventTrigger>();
-      if (trigger == null) trigger = inputField.gameObject.AddComponent<EventTrigger>();
+      if (trigger == null) trigger = Undo.AddComponent<EventTrigger>(inputField.gameObject);
+      Undo.RecordObject(trigger, "Wire PaulKoiPlayer URL input");
       if (trigger.triggers == null) trigger.triggers = new System.Collections.Generic.List<EventTrigger.Entry>();
 
       AddPrefixInputEventTrigger(trigger, EventTriggerType.Select, behaviour, eventName);
@@ -2475,133 +2370,6 @@ namespace YamaBiliDanmakuV3.Editor
       System.Type moduleType = FindType("YamaBiliDanmakuV3.YamaBiliDanmakuModule3");
       if (moduleType != null) return gameObject.GetComponent(moduleType) != null;
       return gameObject.GetComponent("YamaBiliDanmakuModule3") != null;
-    }
-
-    [MenuItem("Yamadev/YamaPlayer/Fix Bili Danmaku U# Program Asset", false, 2005)]
-    public static void FixProgramAssetMenu()
-    {
-      System.Type moduleType = FindType("YamaBiliDanmakuV3.YamaBiliDanmakuModule3");
-      if (moduleType == null)
-      {
-        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Runtime type not found. Run Assets > Reimport All first and check Console for C# compile errors.", "OK");
-        return;
-      }
-
-      UnityEngine.Object asset = EnsureUdonSharpProgramAsset(moduleType);
-      System.Type helperType = FindType("YamaBiliDanmakuV3.YamaBiliUrlPrefixHelper3");
-      UnityEngine.Object helperAsset = helperType == null ? null : EnsureUdonSharpProgramAsset(helperType);
-      if (asset == null || helperAsset == null)
-      {
-        EditorUtility.DisplayDialog("Yama Bili Danmaku", "Failed to create U# Program Asset. Use Create > U# Script manually as described in the README.", "OK");
-        return;
-      }
-
-      Selection.activeObject = asset;
-      EditorGUIUtility.PingObject(asset);
-      EditorUtility.DisplayDialog("Yama Bili Danmaku", "U# Program Assets are ready. Now run UdonSharp > Compile All UdonSharp Programs, then create the module again.", "OK");
-    }
-
-    private static UnityEngine.Object EnsureUdonSharpProgramAsset(System.Type moduleType)
-    {
-      MonoScript script = FindRuntimeScript(moduleType.Name + ".cs");
-      if (script == null)
-      {
-        Debug.LogError("Yama Bili Danmaku: cannot find " + moduleType.Name + ".cs MonoScript.");
-        return null;
-      }
-
-      UnityEngine.Object existing = FindExistingProgramAsset(script);
-      if (existing != null) return existing;
-
-      System.Type programAssetType = FindType("UdonSharp.UdonSharpProgramAsset");
-      if (programAssetType == null)
-      {
-        Debug.LogError("Yama Bili Danmaku: cannot find UdonSharp.UdonSharpProgramAsset type.");
-        return null;
-      }
-
-      string basePath = "Assets/YamaBiliDanmakuV3/Runtime/" + moduleType.Name + ".asset";
-      EnsureDirectoryForAsset(basePath);
-      string path = AssetDatabase.GenerateUniqueAssetPath(basePath);
-
-      ScriptableObject asset = ScriptableObject.CreateInstance(programAssetType);
-      if (asset == null)
-      {
-        Debug.LogError("Yama Bili Danmaku: failed to create UdonSharpProgramAsset instance.");
-        return null;
-      }
-
-      SerializedObject serialized = new SerializedObject(asset);
-      SerializedProperty source = serialized.FindProperty("sourceCsScript");
-      if (source == null)
-      {
-        Debug.LogError("Yama Bili Danmaku: UdonSharpProgramAsset has no sourceCsScript property in this SDK version.");
-        UnityEngine.Object.DestroyImmediate(asset);
-        return null;
-      }
-
-      source.objectReferenceValue = script;
-      serialized.ApplyModifiedPropertiesWithoutUndo();
-
-      AssetDatabase.CreateAsset(asset, path);
-      EditorUtility.SetDirty(asset);
-      AssetDatabase.SaveAssets();
-      AssetDatabase.Refresh();
-
-      TryInvokeAssetMethod(asset, "RefreshProgram");
-      TryInvokeAssetMethod(asset, "UpdateProgram");
-
-      Debug.Log("Yama Bili Danmaku: Created U# Program Asset at " + path);
-      return asset;
-    }
-
-    private static void TryInvokeAssetMethod(UnityEngine.Object asset, string methodName)
-    {
-      if (asset == null) return;
-      try
-      {
-        System.Reflection.MethodInfo method = asset.GetType().GetMethod(methodName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-        if (method != null && method.GetParameters().Length == 0) method.Invoke(asset, null);
-      }
-      catch (System.Exception exception)
-      {
-        Debug.LogWarning("Yama Bili Danmaku: " + methodName + " failed: " + exception.Message);
-      }
-    }
-
-    private static UnityEngine.Object FindExistingProgramAsset(MonoScript script)
-    {
-      string[] guids = AssetDatabase.FindAssets("t:UdonSharpProgramAsset");
-      for (int i = 0; i < guids.Length; i++)
-      {
-        string path = AssetDatabase.GUIDToAssetPath(guids[i]);
-        UnityEngine.Object asset = AssetDatabase.LoadMainAssetAtPath(path);
-        if (asset == null) continue;
-
-        SerializedObject serialized = new SerializedObject(asset);
-        SerializedProperty sourceScript = serialized.FindProperty("sourceCsScript");
-        if (sourceScript != null && sourceScript.objectReferenceValue == script)
-        {
-          return asset;
-        }
-      }
-
-      return null;
-    }
-
-    private static MonoScript FindRuntimeScript(string fileName)
-    {
-      string[] guids = AssetDatabase.FindAssets(System.IO.Path.GetFileNameWithoutExtension(fileName) + " t:MonoScript");
-      for (int i = 0; i < guids.Length; i++)
-      {
-        string path = AssetDatabase.GUIDToAssetPath(guids[i]);
-        if (!path.EndsWith(fileName)) continue;
-
-        MonoScript script = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
-        if (script != null) return script;
-      }
-
-      return null;
     }
 
     private static System.Type FindType(string fullName)

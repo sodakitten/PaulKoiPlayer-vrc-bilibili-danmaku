@@ -93,12 +93,24 @@ async function runAllTests() {
       getElementById: element, createElement: () => element("copySelection"),
       body: { appendChild() {} }, execCommand: () => legacyCopyAllowed
     },
-    URL, window: { location: pageLocation },
+    URL, URLSearchParams, window: { location: pageLocation },
     navigator: { clipboard: { writeText: async (text) => {
       if (clipboardDenied) throw new Error("Clipboard denied");
       copiedLinks.push(text);
     } } },
-    fetch: async (_url, options = {}) => {
+    fetch: async (url, options = {}) => {
+      if (url.startsWith("/api/admin/stats")) {
+        const page = { page: 1, totalPages: 1, total: 1 };
+        return {
+          ok: true,
+          json: async () => ({
+            summary: { emittedDanmakuRows: 4 },
+            timeZone: "Asia/Shanghai",
+            worlds: { ...page, items: [{ id: "wrld_11111111-1111-1111-1111-111111111111", requestCount: 2 }] },
+            history: { ...page, items: [{ title: "<video>", source: "https://example.com/video", worldIds: [] }] }
+          })
+        };
+      }
       if (options.method === "POST") submissions.push(JSON.parse(options.body));
       return { ok: true, json: async () => ({ items: [{ customId: "test-item-01" }], item: { count: 4, vcrid: 1 } }) };
     }
@@ -114,6 +126,15 @@ async function runAllTests() {
   assert.equal(element("adminTokenInput").type, "password");
   assert.equal(element("tokenEye").style.display, "none");
   assert.equal(element("tokenEyeOff").style.display, "");
+  element("saveTokenBtn").handlers.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(element("statsSummary").innerHTML, /累计返回弹幕/);
+  assert.match(element("historyRows").innerHTML, /&lt;video&gt;/);
+  assert.match(element("worldRows").innerHTML, /https:\/\/vrchat.com\/home\/world\/wrld_/);
+  element("customViewBtn").handlers.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(element("dataView").hidden, true);
+  assert.equal(element("customView").hidden, false);
   await element("copy").handlers.click();
   assert.equal(copiedLinks[0], "https://danmaku.paulkoishi.com/player/?url=test-item-01");
   pageLocation.origin = "http://127.0.0.1:7858";
@@ -485,12 +506,28 @@ async function runAllTests() {
 
     const dashboard = await request(`${origin}/?historyProvider=bilibili`);
     assert.equal(dashboard.status, 200);
-    assert.ok(dashboard.text.includes('href="https://www.bilibili.com/video/BV1BDk2YCEHF/"'));
-    assert.ok(dashboard.text.includes('href="https://www.bilibili.com/video/av123456/"'));
-    assert.ok(!dashboard.text.includes('href="https://example.com/temporary.mp4"'));
-    const musicDashboard = await request(`${origin}/?historyProvider=netease`);
-    assert.ok(musicDashboard.text.includes('href="https://music.163.com/song?id=123456"'));
-    console.log("  ✓ Dashboard history links use provider pages instead of playback sources");
+    const publicCache = await request(`${origin}/api/cache/stats`);
+    const adminShell = await request(`${origin}/admin`);
+    for (const response of [dashboard, publicCache, adminShell]) {
+      assert.doesNotMatch(response.text, /BV1BDk2YCEHF|temporary\.mp4|123456/);
+    }
+    assert.equal(publicCache.json.usage.emittedDanmakuRows, 0);
+    assert.equal(Object.hasOwn(publicCache.json, "danmakuEntries"), false);
+    assert.equal(Object.hasOwn(publicCache.json, "failureEntries"), false);
+    const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+    const unauthStats = await request(`${origin}/api/admin/stats`);
+    const wrongStats = await request(`${origin}/api/admin/stats`, { headers: { Authorization: "Bearer wrong-token" } });
+    assert.equal(unauthStats.status, 401);
+    assert.equal(wrongStats.status, 401);
+    const adminStats = await request(`${origin}/api/admin/stats?provider=bilibili`, { headers: adminHeaders });
+    assert.equal(adminStats.status, 200);
+    assert.match(adminStats.headers.get("cache-control"), /no-store/);
+    assert.deepEqual(adminStats.json.history.items.map(item => item.source).sort(), [
+      "https://www.bilibili.com/video/BV1BDk2YCEHF/", "https://www.bilibili.com/video/av123456/"
+    ]);
+    const musicStats = await request(`${origin}/api/admin/stats?provider=netease`, { headers: adminHeaders });
+    assert.equal(musicStats.json.history.items[0].source, "https://music.163.com/song?id=123456");
+    console.log("  ✓ Public responses contain aggregates only and authenticated history links to the provider");
 
     // 3.1 Unauthenticated requests
     const getNoAuth = await request(`${origin}/api/admin/custom`);
@@ -578,12 +615,14 @@ async function runAllTests() {
     console.log("  ✓ Editing preserves vcrid and danmaku; accidental duplicate creation remains rejected");
 
     // 3.6 Player Redirect (browser / player media request)
-    const playRes = await request(`${origin}/player/?url=test-item-01`);
+    const worldId = "wrld_11111111-2222-3333-4444-555555555555";
+    const secondWorldId = "wrld_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const playRes = await request(`${origin}/player/?__world=${worldId}&url=test-item-01`);
     assert.strictEqual(playRes.status, 302, "Media player request must 302 redirect");
     assert.strictEqual(playRes.headers.get("location"), "https://example.com/test-video.mp4");
 
     // 3.7 Danmaku Request (__dm=1)
-    const dmRes = await request(`${origin}/player/?__dm=1&url=test-item-01`);
+    const dmRes = await request(`${origin}/player/?__world=${worldId}&__dm=1&url=test-item-01`);
     assert.strictEqual(dmRes.status, 200);
     assert.ok(dmRes.text.startsWith("#YBDM/1\n"));
     assert.ok(dmRes.text.includes("#manifest_type=bilibili-video\n"));
@@ -604,7 +643,22 @@ async function runAllTests() {
     assert.strictEqual(vcrPlayRes.status, 302);
     assert.strictEqual(vcrPlayRes.headers.get("location"), "https://example.com/test-video.mp4");
 
-    const vcrDmRes = await request(`${origin}/player/?__dm=1&vcrid=${itemVcrid}`);
+    const [vcrDmRes, invalidWorldPlayback, unknownWorldPlayback] = await Promise.all([
+      request(`${origin}/player/?__world=${secondWorldId.toUpperCase()}&__dm=1&vcrid=${itemVcrid}`),
+      request(`${origin}/player/?__world=bad-id&url=test-item-01`),
+      request(`${origin}/player/?__world=wrld_00000000-0000-0000-0000-000000000000&vcrid=0`)
+    ]);
+    assert.equal(invalidWorldPlayback.status, 302);
+    assert.equal(unknownWorldPlayback.status, 400);
+    const tracked = await request(`${origin}/api/admin/stats?provider=custom&world=${worldId}`, { headers: adminHeaders });
+    assert.equal(tracked.json.history.total, 1);
+    assert.equal(tracked.json.history.items[0].title, "Test Video Title");
+    assert.deepEqual(tracked.json.history.items[0].worldIds.sort(), [worldId, secondWorldId]);
+    assert.deepEqual(Object.fromEntries(tracked.json.worlds.items.map(item => [item.id, item.requestCount])), { [worldId]: 2, [secondWorldId]: 1 });
+    assert.ok(tracked.json.summary.emittedDanmakuRows > 0);
+    const publicAfterPlayback = await request(`${origin}/api/cache/stats`);
+    assert.doesNotMatch(publicAfterPlayback.text, /wrld_|Test Video Title|test-item-01|test-video\.mp4/);
+    assert.ok(publicAfterPlayback.json.usage.emittedDanmakuRows > 0);
     assert.strictEqual(vcrDmRes.status, 200);
     assert.ok(vcrDmRes.text.startsWith("#YBDM/1\n"));
     console.log("  ✓ /player/?vcrid=N works for both 302 redirect and danmaku text");
@@ -657,6 +711,9 @@ async function runAllTests() {
     assert.strictEqual(rebootList.status, 200);
     assert.strictEqual(rebootList.json.items.length, 1);
     assert.strictEqual(rebootList.json.items[0].customId, "test-item-01");
+    const rebootStats = await request(`http://127.0.0.1:${assignedPort}/api/admin/stats?world=${worldId}`, { headers: adminHeaders });
+    assert.equal(rebootStats.json.worlds.items.find(item => item.id === worldId).requestCount, 2);
+    assert.equal(rebootStats.json.history.items[0].title, "Test Video Title");
     assert.strictEqual(rebootList.json.items[0].vcrid, itemVcrid);
     console.log("  ✓ Data persisted and shared VCRID maintained after server restart");
 
@@ -717,6 +774,13 @@ async function runAllTests() {
     assert.strictEqual(workerGetRes.status, 200);
     const workerGetJson = await workerGetRes.json();
     assert.strictEqual(workerGetJson.ok, true);
+    const workerPublic = await worker.fetch(new Request("https://worker.local/"), workerEnv);
+    assert.doesNotMatch(await workerPublic.text(), /Test Video Title|wrld_|temporary\.mp4/);
+    const workerStats = await worker.fetch(new Request("https://worker.local/api/admin/stats", {
+      headers: { "X-Admin-Token": adminToken }
+    }), workerEnv);
+    assert.equal(workerStats.status, 200);
+    assert.ok((await workerStats.json()).worlds.total >= 2);
     console.log("  ✓ Worker successfully proxies GET /api/admin/custom with auth header");
 
     // 4.4 Worker proxies POST /api/admin/custom with body and auth
@@ -796,7 +860,7 @@ async function runAllTests() {
   }
 
   console.log("\n=======================================================");
-  console.log(" ALL SERVER 1.2 TESTS PASSED SUCCESSFULLY! ");
+  console.log(" ALL SERVER TESTS PASSED SUCCESSFULLY! ");
   console.log("=======================================================\n");
   process.exit(0);
 }

@@ -8,6 +8,8 @@ const ZNNU_REFERER = "musicParser";
 const ZNNU_SIGNATURE_SECRET = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0";
 
 const memoryCache = new Map();
+const DOCKER_MEDIA_PATHS = new Set(["/player", "/player/", "/api/pages", "/api/lyrics", "/api/resolve", "/api/danmaku"]);
+const ADMIN_PATHS = new Set(["/admin", "/admin/", "/api/admin/custom", "/api/admin/stats"]);
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -15,10 +17,15 @@ export default {
     try {
       if (request.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
       if (url.pathname === "/health") return text("ok\n");
-      if (url.pathname === "/" || url.pathname === "") return html(renderHome(env));
+      if (ADMIN_PATHS.has(url.pathname)) return await proxyToDocker(request, env, url);
+      const dockerOrigin = getDockerOrigin(env);
+      if (dockerOrigin && (url.pathname === "/" || url.pathname === "/api/cache/stats" ||
+          url.pathname === "/assets/paulkoi_logo_transparent.png" ||
+          (DOCKER_MEDIA_PATHS.has(url.pathname) && url.searchParams.has("__world")))) {
+        return await proxyToDocker(request, env, url);
+      }
+      if (url.pathname === "/") return html(renderHome(env));
       if (url.pathname === "/api/cache/stats") return json(buildWorkerStats(env));
-      if (url.pathname === "/admin" || url.pathname === "/admin/") return await handleAdmin(request, env, ctx, url);
-      if (url.pathname === "/api/admin/custom") return await handleAdminCustomApi(request, env, ctx, url);
       if (url.pathname === "/api/danmaku") return await handleApiDanmaku(request, env, ctx, url);
       if (url.pathname === "/api/resolve") return await handleResolve(request, env, ctx, url);
       if (url.pathname === "/api/pages") return await handlePages(request, env, ctx, url);
@@ -178,14 +185,6 @@ async function handlePages(request, env, ctx, requestUrl) {
     totalPages: pages.length,
     pages: pageItems
   }, 200, noStoreHeaders());
-}
-
-async function handleAdmin(request, env, ctx, url) {
-  return await proxyToDocker(request, env, url);
-}
-
-async function handleAdminCustomApi(request, env, ctx, url) {
-  return await proxyToDocker(request, env, url);
 }
 
 async function parseInputUrl(rawValue, env, ctx, forcedPage = 0) {
@@ -828,7 +827,6 @@ function buildWorkerStats(env) {
   return {
     runtime: "cloudflare-workers",
     cache: "Cache API with per-isolate memory fallback",
-    bilibiliOrigin: getDockerOrigin(env),
     persistentCounters: false,
     ttlSeconds: {
       view: intEnv(env, "VIEW_CACHE_TTL_SECONDS", 1800),
@@ -867,7 +865,7 @@ async function proxyToDocker(request, env, requestUrl) {
   }
 
   // Forward admin credentials only to admin endpoints on Node backend, NEVER to external upstreams!
-  if (requestUrl.pathname.startsWith("/admin") || requestUrl.pathname.startsWith("/api/admin")) {
+  if (ADMIN_PATHS.has(requestUrl.pathname)) {
     const auth = request.headers.get("authorization");
     const adminToken = request.headers.get("x-admin-token");
     if (auth) headers.set("authorization", auth);

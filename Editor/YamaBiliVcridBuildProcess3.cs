@@ -19,6 +19,7 @@ namespace YamaBiliDanmakuV3.Editor
       List<YamaBiliPagesPlaylist3> playlists = FindPlaylists(scene);
       if (playlists.Count == 0) return;
 
+      string worldId = PaulKoiWorldUrls.GetWorldId(scene);
       Dictionary<string, VRCUrl[]> catalogs = new Dictionary<string, VRCUrl[]>();
       for (int i = 0; i < playlists.Count; i++)
       {
@@ -37,6 +38,8 @@ namespace YamaBiliDanmakuV3.Editor
         // Existing scenes acquire the new reference without rebuilding their UI.
         YamaBiliDanmakuModule3 module = serialized.FindProperty("_danmakuModule").objectReferenceValue as YamaBiliDanmakuModule3;
         if (module != null) module.SetProgramVariable("_pagesPlaylist", playlist);
+        PaulKoiWorldUrls.StampUrl(playlist, "_pagesApiPrefix", worldId);
+        prefix = PaulKoiWorldUrls.WithWorldId(prefix, "vcrid", worldId);
 
         string key = prefix + "\n" + max;
         if (!catalogs.TryGetValue(key, out VRCUrl[] urls))
@@ -59,20 +62,10 @@ namespace YamaBiliDanmakuV3.Editor
         YamaBiliPagesPlaylist3[] found = roots[i].GetComponentsInChildren<YamaBiliPagesPlaylist3>(true);
         for (int j = 0; j < found.Length; j++)
         {
-          if (found[j] != null && !IsEditorOnly(found[j].transform)) results.Add(found[j]);
+          if (found[j] != null && !PaulKoiWorldUrls.IsEditorOnly(found[j].transform)) results.Add(found[j]);
         }
       }
       return results;
-    }
-
-    private static bool IsEditorOnly(Transform current)
-    {
-      while (current != null)
-      {
-        if (current.CompareTag("EditorOnly")) return true;
-        current = current.parent;
-      }
-      return false;
     }
 
     private static VRCUrl[] BuildCatalog(string prefix, int max)

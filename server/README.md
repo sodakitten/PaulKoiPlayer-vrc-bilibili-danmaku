@@ -1,6 +1,6 @@
 # PaulKoiPlayer Danmaku Server
 
-Version: `1.2` (npm: `1.2.0`)
+Version: `1.3` (npm: `1.3.0`)
 
 A small Dockerized Node.js proxy for VRChat video player style playback URLs.
 
@@ -16,27 +16,22 @@ It accepts a `/player/?url=...` request, resolves supported Bilibili and NetEase
 - NetEase playlist page selection with `p` or `page`.
 - NetEase short-link support through `163cn.tv`.
 - Bounded cache for Bilibili view/playurl data and NetEase playlist/song URLs.
-- Persistent Bilibili danmaku disk cache under `/app/data/danmaku-cache`, with bounded dashboard display.
+- Persistent Bilibili danmaku disk cache under `/app/data/danmaku-cache`.
 - Persistent dashboard counters under `/app/data/stats.json`, including Bilibili video redirects, Bilibili live redirects, NetEase redirects, danmaku requests, cache hits, and emitted danmaku rows.
 - No database required.
 
-## Server 1.2
+## Public statistics and admin
 
-The official 1.2 backend adds custom media and danmaku management at `/admin`.
+The public home page and `/api/cache/stats` expose aggregate counters.
 Configure `ADMIN_TOKEN` in a local `.env` next to `docker-compose.yml`, then rebuild
-and restart the service. The admin page accepts XML, JSON or `#YBDM/1` files and
-stores each custom entry with a persistent vcrid. Editing without a new file
-preserves the existing danmaku. Link buttons copy complete URLs using the current
-page origin. The token visibility button switches between eye and eye-off icons.
+and restart the service. The Service Data view at `/admin` displays world usage
+and playback and resolution history. The Custom Video Danmaku view manages
+custom media links and XML, JSON or `#YBDM/1` files with persistent vcrids.
 
-Bilibili multi-part manifests, NetEase song/playlist manifests, lyrics, playback
-history and the existing video/live redirects remain available. Dashboard history
-links open the source provider's page. JSON stores and danmaku files live in the
-`./data` volume and survive container replacement.
-
-See [README.Docker.md](README.Docker.md) for installation, admin configuration,
-upgrade and backup instructions. This release publishes only the backend; Unity
-packages and existing releases are unchanged.
+Unity-generated URLs can include `__world=wrld_<uuid>`. The optional value is
+recorded with tagged media requests in the existing history store. Old history
+remains readable after upgrading, and JSON stores and danmaku files remain in the
+`./data` volume. See [Docker deployment and upgrade](README.Docker.md).
 
 ## Quick Start
 
@@ -86,7 +81,7 @@ The Worker version keeps the core endpoints:
 - `GET /api/resolve?url=...`
 - `GET /api/cache/stats`
 
-It uses the Cloudflare Cache API with an in-isolate memory fallback. Persistent dashboard counters and the full Docker dashboard are intentionally not included in the Worker version. The Docker service remains the stable deployment path.
+It uses the Cloudflare Cache API with an in-isolate memory fallback. With `BILI_DOCKER_ORIGIN` configured, public statistics, admin routes and world-tagged media requests go to the Docker service.
 
 ## URL Examples
 
@@ -178,7 +173,6 @@ Or URL-encode the inner URL so `#` becomes `%23`.
 | `VIEW_CACHE_MAX_ENTRIES` | `500` | Maximum in-memory Bilibili view cache entries. Oldest entries are evicted first. |
 | `VIDEO_URL_CACHE_MAX_ENTRIES` | `500` | Maximum in-memory video/live direct URL cache entries. Oldest entries are evicted first. |
 | `DANMAKU_CACHE_MAX_ENTRIES` | `50` | Maximum danmaku cache entries kept in memory and on disk. Oldest/least recently accessed entries are evicted first. |
-| `DASHBOARD_DANMAKU_MAX_ENTRIES` | `20` | Maximum danmaku cache cards shown on the dashboard. |
 | `NETEASE_PLAYLIST_CACHE_TTL_SECONDS` | `1800` | NetEase playlist metadata cache TTL. |
 | `NETEASE_URL_CACHE_TTL_SECONDS` | `600` | NetEase song direct URL cache TTL. |
 | `NETEASE_LEVEL` | `standard` | Default NetEase quality level. Supported values include `standard`, `exhigh`, `lossless`, `hires`, `sky`, `jyeffect`, `jymaster`. |

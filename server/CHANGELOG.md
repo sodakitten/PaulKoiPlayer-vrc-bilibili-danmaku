@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3 - 2026-11-27
+
+- Limited the public dashboard and cache statistics endpoint to aggregate data.
+- Added authenticated playback and resolution history, world usage, and world filtering at `/admin`.
+- Added a separate admin view for custom video and danmaku management.
+- Recorded optional `__world` IDs on media requests while keeping playback compatible with older clients.
+- Kept existing statistics, history, custom entries, and VCRID mappings in the existing data volume.
+
 ## 1.2 - 2026-10-09
 
 - Promoted the current Node/Docker backend to the official 1.2 release; npm version is `1.2.0`.

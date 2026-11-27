@@ -1,6 +1,5 @@
 /**
- * Admin management page UI for PaulKoiPlayer Custom Danmaku mappings.
- * Shared between Node.js server and Cloudflare Worker.
+ * Admin interface for service statistics, playback history and custom danmaku.
  */
 
 export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.png" } = {}) {
@@ -10,7 +9,7 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/png" href="${logoPath}">
-  <title>PaulKoiPlayer 自定义弹幕管理</title>
+  <title>PaulKoiPlayer 管理后台</title>
   <style>
     :root {
       --bg: #f6f7f9;
@@ -388,6 +387,21 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
       text-align: center;
       color: var(--muted);
     }
+    [hidden] { display: none !important; }
+    .view-nav { margin-top: 20px; }
+    .view-nav button[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: white; }
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:12px; margin:0; }
+    .stats-grid div { padding:14px; border:1px solid var(--line); border-radius:8px; }
+    .stats-grid dt { color:var(--muted); font-size:14px; }
+    .stats-grid dd { margin:6px 0 0; font-size:24px; font-weight:700; }
+    .table-scroll { overflow-x:auto; }
+    .stats-table td { vertical-align:top; }
+    .stats-table small { display:block; margin-top:4px; color:var(--muted); }
+    .stats-table a { color:var(--green-dark); }
+    .stats-table td:first-child { min-width:170px; }
+    .history-filter { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:16px; align-items:end; }
+    .history-filter label { display:grid; gap:6px; }
+    .history-filter select { min-height:40px; padding:6px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; background:white; }
     @media (max-width: 880px) {
       header { flex-direction: column; align-items: flex-start; }
       .form-grid { grid-template-columns: 1fr; }
@@ -430,6 +444,58 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
       </p>
     </section>
 
+    <nav class="nav-links view-nav" aria-label="后台视图">
+      <button type="button" class="btn-secondary" id="dataViewBtn" aria-controls="dataView" aria-pressed="true">服务数据</button>
+      <button type="button" class="btn-secondary" id="customViewBtn" aria-controls="customView" aria-pressed="false">自定义视频弹幕</button>
+    </nav>
+
+    <div id="dataView">
+      <section class="panel">
+        <div class="nav-links">
+          <h2>服务统计</h2>
+          <button type="button" class="btn-secondary" id="refreshStatsBtn">刷新</button>
+        </div>
+        <p id="statsStatus" role="status">输入管理员凭证后查看数据。</p>
+        <dl class="stats-grid" id="statsSummary"></dl>
+      </section>
+      <div id="statsDetails" hidden>
+        <section class="panel">
+          <h2>世界使用情况</h2>
+          <div class="table-scroll">
+            <table class="stats-table">
+              <thead><tr><th>世界 ID</th><th>请求次数</th><th>首次请求</th><th>最近请求</th></tr></thead>
+              <tbody id="worldRows"></tbody>
+            </table>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn-secondary" id="worldPrev">上一页</button>
+            <span id="worldPagination"></span>
+            <button type="button" class="btn-secondary" id="worldNext">下一页</button>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>播放与解析记录</h2>
+          <form class="history-filter" id="historyFilter">
+            <label>来源<select id="historyProvider"><option value="">全部</option><option value="bilibili">B 站</option><option value="netease">网易云</option><option value="custom">自定义</option></select></label>
+            <label>世界 ID<input id="historyWorld" type="text" placeholder="wrld_…" maxlength="41"></label>
+            <button type="submit" class="btn-secondary">筛选</button>
+          </form>
+          <div class="table-scroll">
+            <table class="stats-table">
+              <thead><tr><th>内容</th><th>请求次数</th><th>最近请求</th><th>世界</th></tr></thead>
+              <tbody id="historyRows"></tbody>
+            </table>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn-secondary" id="historyPrev">上一页</button>
+            <span id="historyPagination"></span>
+            <button type="button" class="btn-secondary" id="historyNext">下一页</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="customView" hidden>
     <!-- Local Video Notice Banner -->
     <section class="panel" style="background: var(--soft-warn); border-color: #fed7aa;">
       <h2 style="color: var(--amber); margin-bottom: 8px;">&#128161; 本地视频直链配置说明 (必读)</h2>
@@ -522,6 +588,7 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
         <li><strong>完全无需修改 Unity 客户端或 Shader</strong>，与原 B 站及网易云功能完全并存！</li>
       </ol>
     </section>
+    </div>
   </main>
 
   <script>
@@ -553,12 +620,28 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
 
       let isEditing = false;
       let currentAdminToken = '';
+      let currentView = 'data';
+      let statsRequest = 0;
+      let customRequest = 0;
+      let historyPage = 1;
+      let worldPage = 1;
+      let providerFilter = '';
+      let worldFilter = '';
+
+      const byId = id => document.getElementById(id);
+      const statsStatus = byId('statsStatus');
+      const statsSummary = byId('statsSummary');
+      const statsDetails = byId('statsDetails');
+      const historyRows = byId('historyRows');
+      const worldRows = byId('worldRows');
 
       function getSessionToken() {
         return currentAdminToken;
       }
 
       function setSessionToken(token) {
+        clearStats();
+        tableBody.innerHTML = '';
         currentAdminToken = token ? String(token).trim() : '';
         setTokenVisibility(false);
         updateTokenUi();
@@ -594,17 +677,21 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
       saveTokenBtn.addEventListener('click', () => {
         const token = tokenInput.value.trim();
         if (!token) {
-          showAlert('请输入管理员凭证后再保存。', 'alert-warn');
+          tokenStatus.textContent = '请输入管理员凭证后再保存。';
           return;
         }
         setSessionToken(token);
-        showAlert('管理员凭证已保存至当前会话内存。', 'alert-info');
-        loadItems();
+        refreshView();
       });
 
       clearTokenBtn.addEventListener('click', () => {
         setSessionToken('');
-        showAlert('已清除当前会话凭证。', 'alert-warn');
+        statsRequest++;
+        customRequest++;
+        clearStats();
+        statsStatus.textContent = '输入管理员凭证后查看数据。';
+        resetForm();
+        tableBody.innerHTML = '<tr><td colspan="7" class="empty-state">输入管理员凭证后查看列表。</td></tr>';
       });
 
       function showAlert(msg, type = 'alert-info') {
@@ -624,6 +711,102 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;');
+      }
+
+      function refreshView() {
+        if (currentView === 'data') loadStats();
+        else loadItems();
+      }
+
+      function selectView(view) {
+        currentView = view;
+        const showData = view === 'data';
+        byId('dataView').hidden = !showData;
+        byId('customView').hidden = showData;
+        byId('dataViewBtn').setAttribute('aria-pressed', String(showData));
+        byId('customViewBtn').setAttribute('aria-pressed', String(!showData));
+        refreshView();
+      }
+
+      function clearStats() {
+        statsSummary.innerHTML = '';
+        historyRows.innerHTML = '';
+        worldRows.innerHTML = '';
+        statsDetails.hidden = true;
+      }
+
+      function count(value) {
+        return Number(value || 0).toLocaleString('zh-CN');
+      }
+
+      function link(url, label) {
+        const text = escapeHtml(label);
+        const normalized = String(url || '').toLowerCase();
+        return normalized.startsWith('https://') || normalized.startsWith('http://')
+          ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>'
+          : text;
+      }
+
+      function showPagination(prefix, data) {
+        byId(prefix + 'Pagination').textContent = data.page + ' / ' + data.totalPages + ' 页 · ' + count(data.total) + ' 条';
+        byId(prefix + 'Prev').disabled = data.page <= 1;
+        byId(prefix + 'Next').disabled = data.page >= data.totalPages;
+      }
+
+      function displayStats(data) {
+        const timeFormat = new Intl.DateTimeFormat('zh-CN', {
+          timeZone: data.timeZone, dateStyle: 'short', timeStyle: 'short'
+        });
+        const time = value => value ? timeFormat.format(value) : '—';
+        const labels = {
+          emittedDanmakuRows: '累计返回弹幕',
+          totalPlayRedirects: '播放跳转',
+          danmakuRequests: '弹幕及清单请求',
+          bilibiliVideoRedirects: 'B 站视频跳转',
+          bilibiliLiveRedirects: 'B 站直播跳转',
+          neteaseRedirects: '网易云播放跳转',
+          customRedirects: '自定义视频跳转'
+        };
+        statsSummary.innerHTML = Object.entries(labels).map(([key, label]) =>
+          '<div><dt>' + label + '</dt><dd>' + count(data.summary[key]) + '</dd></div>'
+        ).join('');
+        worldRows.innerHTML = data.worlds.items.map(item =>
+          '<tr><td>' + link('https://vrchat.com/home/world/' + item.id, item.id) + '</td><td>' +
+          count(item.requestCount) + '</td><td>' + time(item.firstSeenAt) + '</td><td>' + time(item.lastSeenAt) + '</td></tr>'
+        ).join('') || '<tr><td colspan="4" class="empty-state">暂无带世界 ID 的请求。</td></tr>';
+        historyRows.innerHTML = data.history.items.map(item => {
+          const plays = Number(item.events?.player_redirect || 0) + Number(item.events?.vcrid_player || 0);
+          const ids = item.worldIds.map(id => link('https://vrchat.com/home/world/' + id, id)).join('<br>');
+          const metadata = [item.type, item.identity, item.page > 1 ? 'P' + item.page : ''].filter(Boolean).join(' · ');
+          return '<tr><td>' + link(item.source, item.title) + '<small>' + escapeHtml(metadata) + '</small></td><td>' +
+            count(item.seenCount) + '<small>播放跳转 ' + count(plays) + '</small></td><td>' +
+            time(item.lastSeenAt) + '<small>首次 ' + time(item.firstSeenAt) + '</small></td><td>' + (ids || '—') + '</td></tr>';
+        }).join('') || '<tr><td colspan="4" class="empty-state">暂无符合条件的记录。</td></tr>';
+        historyPage = data.history.page;
+        worldPage = data.worlds.page;
+        showPagination('world', data.worlds);
+        showPagination('history', data.history);
+        statsDetails.hidden = false;
+      }
+
+      async function loadStats() {
+        const token = getSessionToken();
+        const requestId = ++statsRequest;
+        if (!token) return;
+        statsStatus.textContent = '正在加载服务数据…';
+        const query = new URLSearchParams({ page: historyPage, worldPage, provider: providerFilter, world: worldFilter });
+        try {
+          const response = await fetch('/api/admin/stats?' + query, { headers: { 'Authorization': 'Bearer ' + token } });
+          const data = await response.json();
+          if (requestId !== statsRequest || token !== getSessionToken()) return;
+          if (!response.ok) throw new Error(data.message || data.error || response.status);
+          displayStats(data);
+          statsStatus.textContent = '';
+        } catch (error) {
+          if (requestId !== statsRequest || token !== getSessionToken()) return;
+          clearStats();
+          statsStatus.textContent = '加载失败 · ' + error.message;
+        }
       }
 
       function resetForm() {
@@ -799,12 +982,14 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
 
       async function loadItems() {
         const token = getSessionToken();
+        const requestId = ++customRequest;
         tableBody.innerHTML = '<tr><td colspan="7" class="empty-state">正在加载列表...</td></tr>';
         try {
           const res = await fetch('/api/admin/custom', {
             headers: token ? { 'Authorization': 'Bearer ' + token } : {}
           });
           const data = await res.json();
+          if (requestId !== customRequest || token !== getSessionToken()) return;
           if (!res.ok) {
             if (res.status === 403) {
               tableBody.innerHTML = '<tr><td colspan="7" class="empty-state" style="color:var(--amber);">服务端管理功能已关闭（服务端未配置 ADMIN_TOKEN 环境变量）。请在服务器配置环境变量后使用。</td></tr>';
@@ -898,15 +1083,28 @@ export function renderAdminPage({ logoPath = "/assets/paulkoi_logo_transparent.p
             });
           });
         } catch (err) {
+          if (requestId !== customRequest || token !== getSessionToken()) return;
           tableBody.innerHTML = '<tr><td colspan="7" class="empty-state" style="color:var(--red);">请求异常: ' + escapeHtml(err.message) + '</td></tr>';
         }
       }
 
       refreshListBtn.addEventListener('click', loadItems);
+      byId('dataViewBtn').addEventListener('click', () => selectView('data'));
+      byId('customViewBtn').addEventListener('click', () => selectView('custom'));
+      byId('refreshStatsBtn').addEventListener('click', loadStats);
+      byId('historyFilter').addEventListener('submit', event => {
+        event.preventDefault();
+        providerFilter = byId('historyProvider').value;
+        worldFilter = byId('historyWorld').value.trim();
+        historyPage = 1;
+        loadStats();
+      });
+      byId('historyPrev').addEventListener('click', () => { historyPage--; loadStats(); });
+      byId('historyNext').addEventListener('click', () => { historyPage++; loadStats(); });
+      byId('worldPrev').addEventListener('click', () => { worldPage--; loadStats(); });
+      byId('worldNext').addEventListener('click', () => { worldPage++; loadStats(); });
 
-      // Initialize UI on page load
       updateTokenUi();
-      loadItems();
     })();
   </script>
 </body>

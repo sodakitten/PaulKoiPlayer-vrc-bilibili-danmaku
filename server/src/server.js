@@ -1,4 +1,5 @@
 import http from "node:http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -21,7 +22,6 @@ const DANMAKU_CACHE_TTL_MS = intEnv("DANMAKU_CACHE_TTL_SECONDS", 21600) * 1000;
 const VIEW_CACHE_MAX_ENTRIES = intEnv("VIEW_CACHE_MAX_ENTRIES", 500);
 const VIDEO_URL_CACHE_MAX_ENTRIES = intEnv("VIDEO_URL_CACHE_MAX_ENTRIES", 500);
 const DANMAKU_CACHE_MAX_ENTRIES = intEnv("DANMAKU_CACHE_MAX_ENTRIES", 50);
-const DASHBOARD_DANMAKU_MAX_ENTRIES = intEnv("DASHBOARD_DANMAKU_MAX_ENTRIES", 20);
 const DANMAKU_DISK_CACHE_DIR = process.env.DANMAKU_DISK_CACHE_DIR || "/app/data/danmaku-cache";
 const DANMAKU_DISK_CACHE_INITIAL_TTL_MS = intEnv("DANMAKU_DISK_CACHE_INITIAL_TTL_SECONDS", 86400) * 1000;
 const DANMAKU_DISK_CACHE_REFRESH_MS = intEnv("DANMAKU_DISK_CACHE_REFRESH_SECONDS", 86400) * 1000;
@@ -82,6 +82,8 @@ const bilibiliListCache = new Map();
 const failureCache = new Map();
 const rateLimitBuckets = new Map();
 const inflight = new Map();
+const worldRequest = new AsyncLocalStorage();
+const MEDIA_PATHS = new Set(["/player", "/player/", "/api/pages", "/api/lyrics", "/api/resolve", "/api/danmaku"]);
 let vcrIdStore = null;
 let historyStore = null;
 let znnuKeySession = null;
@@ -130,7 +132,11 @@ const stats = {
 };
 let statsDirty = false;
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
+  worldRequest.run({ worldId: "", counted: false }, () => handleRequest(req, res));
+});
+
+async function handleRequest(req, res) {
   try {
     const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     setCors(res);
@@ -156,9 +162,11 @@ const server = http.createServer(async (req, res) => {
     stats.totalRequests++;
     markStatsDirty();
 
+    const worldId = MEDIA_PATHS.has(requestUrl.pathname) ? normalizeWorldId(requestUrl.searchParams.get("__world")) : "";
+    if (worldId && req.method === "GET") worldRequest.getStore().worldId = worldId;
+
     if (requestUrl.pathname === "/") {
-      await backfillDashboardBilibiliTitles();
-      sendHtml(res, 200, renderDashboard(requestUrl), noStoreHeaders());
+      sendHtml(res, 200, renderDashboard(), noStoreHeaders());
       return;
     }
 
@@ -169,6 +177,11 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname === "/api/admin/custom") {
       await handleAdminCustomApi(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/stats") {
+      handleAdminStats(req, res, requestUrl);
       return;
     }
 
@@ -228,7 +241,7 @@ const server = http.createServer(async (req, res) => {
     console.error(error);
     sendText(res, 500, `#YBDM/1\n#error=${escapeField(error.message || String(error))}\n`);
   }
-});
+}
 
 async function handlePlayer(req, res, requestUrl) {
   stats.playerRequests++;
@@ -852,6 +865,17 @@ async function handleLyrics(res, requestUrl) {
   }
 
   const lyrics = await getNeteaseLyrics(target.songId);
+  if (worldRequest.getStore()?.worldId) {
+    recordHistory({
+      provider: "netease",
+      contentType: "song",
+      songId: target.songId,
+      name: lyrics.name || target.name,
+      artist: lyrics.artist || target.artist,
+      album: lyrics.album || target.album,
+      vcrid: target.vcrid
+    }, "api_lyrics");
+  }
   sendJson(res, 200, {
     type: "netease-lyrics",
     provider: "netease",
@@ -1212,9 +1236,23 @@ function historyKey(input = {}) {
   return "";
 }
 
+function normalizeWorldId(value) {
+  const id = String(value || "").toLowerCase();
+  return /^wrld_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : "";
+}
+
 function recordHistory(input, event = "seen", options = {}) {
   try {
-    return historyStore?.upsert(input, event, options);
+    const tracked = worldRequest.getStore();
+    if (!tracked?.worldId) return historyStore?.upsert(input, event, options);
+    const record = historyStore?.upsert(input, event, {
+      ...options,
+      worldId: tracked.worldId,
+      countWorldRequest: !tracked.counted
+    });
+    // Some requests update both a collection and its active item.
+    if (record) tracked.counted = true;
+    return record;
   } catch (error) {
     console.warn(`[history] record failed: ${error.message || error}`);
     return null;
@@ -1967,6 +2005,56 @@ function authenticateAdmin(req) {
   return { ok: true };
 }
 
+function handleAdminStats(req, res, requestUrl) {
+  const headers = noStoreHeaders();
+  const auth = authenticateAdmin(req);
+  if (!auth.ok) {
+    sendJson(res, auth.status, { error: auth.error, message: auth.message }, headers);
+    return;
+  }
+  if (req.method !== "GET") {
+    sendJson(res, 405, { error: "method_not_allowed" }, { ...headers, "Allow": "GET" });
+    return;
+  }
+
+  const provider = requestUrl.searchParams.get("provider") || "";
+  const worldId = requestUrl.searchParams.get("world") || "";
+  if ((provider && !["bilibili", "netease", "custom"].includes(provider)) || (worldId && !normalizeWorldId(worldId))) {
+    sendJson(res, 400, { error: "invalid_filter", message: "Invalid provider or world ID." }, headers);
+    return;
+  }
+  const history = historyStore.list({
+    page: readPositiveInt(requestUrl.searchParams.get("page"), 1),
+    pageSize: DASHBOARD_HISTORY_PAGE_SIZE,
+    provider,
+    worldId: normalizeWorldId(worldId)
+  });
+  sendJson(res, 200, {
+    summary: buildUsageStats(),
+    timeZone: DISPLAY_TIME_ZONE,
+    worlds: historyStore.listWorlds(readPositiveInt(requestUrl.searchParams.get("worldPage"), 1), DASHBOARD_HISTORY_PAGE_SIZE),
+    history: {
+      ...history,
+      items: history.items.map((item) => ({
+        id: item.id,
+        title: item.title || historyIdentity(item),
+        identity: historyIdentity(item),
+        provider: item.provider,
+        type: historyTypeLabel(item),
+        page: item.page,
+        pagesCount: item.pagesCount,
+        source: historySourceLink(item),
+        vcrids: item.vcrids,
+        firstSeenAt: item.firstSeenAt,
+        lastSeenAt: item.lastSeenAt,
+        seenCount: item.seenCount,
+        events: item.events,
+        worldIds: item.worldIds || []
+      }))
+    }
+  }, headers);
+}
+
 function readJsonBody(req, limitBytes = 16 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -2096,7 +2184,8 @@ class HistoryStore {
     this.data = {
       version: 1,
       nextId: 1,
-      records: {}
+      records: {},
+      worlds: {}
     };
     this.available = true;
     this.load();
@@ -2109,7 +2198,8 @@ class HistoryStore {
       this.data = {
         version: 1,
         nextId: Math.max(1, Number(payload.nextId || 1)),
-        records: payload.records && typeof payload.records === "object" ? payload.records : {}
+        records: payload.records && typeof payload.records === "object" ? payload.records : {},
+        worlds: payload.worlds && typeof payload.worlds === "object" ? payload.worlds : {}
       };
     } catch (error) {
       this.available = false;
@@ -2162,17 +2252,40 @@ class HistoryStore {
       current.vcrids = current.vcrids.slice(-200);
     }
 
+    if (options.worldId) {
+      current.worldIds = current.worldIds || [];
+      if (!current.worldIds.includes(options.worldId)) current.worldIds.push(options.worldId);
+      if (options.countWorldRequest) {
+        const world = this.data.worlds[options.worldId] || { firstSeenAt: now, requestCount: 0 };
+        world.lastSeenAt = now;
+        world.requestCount++;
+        this.data.worlds[options.worldId] = world;
+      }
+    }
+
     this.data.records[key] = current;
     if (!options.deferSave) this.save();
     return current;
   }
 
-  list({ page = 1, pageSize = 20, provider = "", contentType = "" } = {}) {
-    const normalizedPageSize = Math.min(100, Math.max(1, Number(pageSize || 20)));
+  list({ page = 1, pageSize = 20, provider = "", contentType = "", worldId = "" } = {}) {
     const all = Object.values(this.data.records || {})
       .filter((record) => !provider || record.provider === provider)
       .filter((record) => !contentType || record.contentType === contentType)
+      .filter((record) => !worldId || record.worldIds?.includes(worldId))
       .sort((left, right) => Number(right.lastSeenAt || 0) - Number(left.lastSeenAt || 0));
+    return this.paginate(all, page, pageSize);
+  }
+
+  listWorlds(page, pageSize) {
+    const all = Object.entries(this.data.worlds)
+      .map(([id, usage]) => ({ id, ...usage }))
+      .sort((left, right) => right.lastSeenAt - left.lastSeenAt || left.id.localeCompare(right.id));
+    return this.paginate(all, page, pageSize);
+  }
+
+  paginate(all, page, pageSize) {
+    const normalizedPageSize = Math.min(100, Math.max(1, Number(pageSize || 20)));
     const total = all.length;
     const totalPages = Math.max(1, Math.ceil(total / normalizedPageSize));
     const currentPage = Math.min(Math.max(1, Number(page || 1)), totalPages);
@@ -4576,16 +4689,6 @@ function pruneFailureCache(now = Date.now()) {
   }
 }
 
-function failureCacheEntries(now = Date.now()) {
-  pruneFailureCache(now);
-  return [...failureCache.entries()].map(([key, entry]) => ({
-    key,
-    message: entry.message,
-    ageSeconds: Math.floor((now - entry.time) / 1000),
-    expiresInSeconds: Math.max(0, Math.floor((entry.expiresAt - now) / 1000))
-  }));
-}
-
 async function singleflightWithFailureCache(key, loader) {
   throwCachedFailure(key);
   return singleflight(key, () => loadWithFailureCache(key, loader));
@@ -4757,8 +4860,8 @@ class ProtoReader {
 
 function buildCacheStats() {
   pruneAllExpiredCaches();
-  const now = Date.now();
   return {
+    usage: buildUsageStats(),
     caches: {
       viewEntries: viewCache.size,
       videoUrlEntries: videoUrlCache.size,
@@ -4770,10 +4873,6 @@ function buildCacheStats() {
       vcridStoreAvailable: Boolean(vcrIdStore?.available),
       vcridUsageRatio: vcrIdStore ? vcrIdStore.usageRatio() : 0,
       vcridLastGc: vcrIdStore ? vcrIdStore.lastGc : null,
-      vcridStoreFile: VCRID_STORE_FILE,
-      historyEntries: historyStore ? Object.keys(historyStore.data.records || {}).length : 0,
-      historyStoreAvailable: Boolean(historyStore?.available),
-      historyStoreFile: HISTORY_STORE_FILE,
       rateLimitBuckets: rateLimitBuckets.size
     },
     hits: {
@@ -4809,10 +4908,7 @@ function buildCacheStats() {
         usageThreshold: VCRID_GC_USAGE_THRESHOLD,
         targetUsage: VCRID_GC_TARGET_USAGE,
         minUnusedDays: VCRID_GC_MIN_UNUSED_DAYS
-      },
-      dashboardHistoryPageSize: DASHBOARD_HISTORY_PAGE_SIZE,
-      dashboardDanmaku: DASHBOARD_DANMAKU_MAX_ENTRIES,
-      danmakuDiskDir: DANMAKU_DISK_CACHE_DIR
+      }
     },
     requests: {
       playerRedirects: stats.playerRedirects,
@@ -4852,237 +4948,8 @@ function buildCacheStats() {
         apiLyrics: RATE_LIMIT_API_LYRICS,
         cacheStats: RATE_LIMIT_CACHE_STATS
       }
-    },
-    failureEntries: failureCacheEntries(now),
-    danmakuEntries: [...danmakuCache.entries()].map(([key, entry]) => {
-      const text = entry.value || "";
-      return {
-        key,
-        bvid: headerValue(text, "bvid"),
-        aid: Number(headerValue(text, "aid") || 0),
-        cid: Number(headerValue(text, "cid") || 0),
-        page: Number(headerValue(text, "page") || 1),
-        title: headerValue(text, "title"),
-        part: headerValue(text, "part"),
-        count: getDanmakuCount(text),
-        ageSeconds: Math.floor((now - entry.time) / 1000),
-        expiresInSeconds: Math.max(0, Math.floor((Number(entry.expiresAt || 0) - now) / 1000)),
-        lastAccessAgeSeconds: Math.floor((now - Number(entry.lastAccessAt || entry.time)) / 1000)
-      };
-    })
-  };
-}
-
-function buildBilibiliVideoSummaries(limit = 12) {
-  const groups = new Map();
-  const cachedTitles = cachedBilibiliTitlesByBvid();
-  const ensureGroup = ({ bvid, aid }) => {
-    const normalizedBvid = normalizeBvid(bvid);
-    const normalizedAid = normalizeAid(aid);
-    const key = normalizedBvid || (normalizedAid ? `av${normalizedAid}` : "");
-    if (!key) return null;
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        bvid: normalizedBvid,
-        aid: normalizedAid,
-        title: "",
-        firstPart: "",
-        pages: new Set(),
-        playedPages: new Set(),
-        danmakuPages: new Set(),
-        vcrids: 0,
-        playCount: 0,
-        danmakuRows: 0,
-        lastAccessAt: 0,
-        lastPlayedAt: 0,
-        lastDanmakuAt: 0
-      };
-      groups.set(key, group);
     }
-    return group;
   };
-
-  const records = Object.values(vcrIdStore?.data?.records || {});
-  for (const record of records) {
-    if (!record || record.provider !== "bilibili") continue;
-    const group = ensureGroup({ bvid: record.bvid, aid: record.aid });
-    if (!group) continue;
-    if (!group.title) group.title = String(record.title || cachedTitles.get(group.bvid) || "").trim();
-    if (!group.firstPart && record.part) group.firstPart = String(record.part || "").trim();
-    const pageKey = record.cid ? `cid:${record.cid}` : `page:${Math.max(1, Number(record.page || 1))}`;
-    group.pages.add(pageKey);
-    group.vcrids++;
-    group.playCount += Number(record.playCount || 0);
-    if (Number(record.playCount || 0) > 0 || Number(record.lastPlayedAt || 0) > 0) {
-      group.playedPages.add(pageKey);
-    }
-    group.lastAccessAt = Math.max(group.lastAccessAt, Number(record.lastAccessAt || record.updatedAt || record.createdAt || 0));
-    group.lastPlayedAt = Math.max(group.lastPlayedAt, Number(record.lastPlayedAt || 0));
-  }
-
-  for (const entry of danmakuCache.values()) {
-    const text = entry?.value || "";
-    const bvid = normalizeBvid(headerValue(text, "bvid"));
-    const aid = normalizeAid(headerValue(text, "aid"));
-    const group = ensureGroup({ bvid, aid });
-    if (!group) continue;
-    const cid = normalizeAid(headerValue(text, "cid"));
-    const page = readPositiveInt(headerValue(text, "page"), 1);
-    const pageKey = cid ? `cid:${cid}` : `page:${page}`;
-    group.danmakuPages.add(pageKey);
-    if (!group.title) group.title = headerValue(text, "title");
-    if (!group.firstPart) group.firstPart = headerValue(text, "part");
-    group.danmakuRows += getDanmakuCount(text);
-    group.lastDanmakuAt = Math.max(group.lastDanmakuAt, Number(entry.lastAccessAt || entry.time || 0));
-    group.lastAccessAt = Math.max(group.lastAccessAt, Number(entry.lastAccessAt || entry.time || 0));
-  }
-
-  const items = [...groups.values()]
-    .map((group) => ({
-      key: group.key,
-      bvid: group.bvid,
-      aid: group.aid,
-      title: group.title || (group.pages.size === 1 ? group.firstPart : "") || group.bvid || `av${group.aid}`,
-      subtitle: group.bvid || `av${group.aid}`,
-      pagesCount: group.pages.size,
-      playedPagesCount: group.playedPages.size,
-      danmakuPagesCount: group.danmakuPages.size,
-      vcrids: group.vcrids,
-      playCount: group.playCount,
-      danmakuRows: group.danmakuRows,
-      lastAccessAt: group.lastAccessAt,
-      lastPlayedAt: group.lastPlayedAt,
-      lastDanmakuAt: group.lastDanmakuAt,
-      url: group.bvid
-        ? `https://www.bilibili.com/video/${group.bvid}/`
-        : `https://www.bilibili.com/video/av${group.aid}/`
-    }))
-    .sort((left, right) => (right.lastPlayedAt || right.lastAccessAt) - (left.lastPlayedAt || left.lastAccessAt));
-
-  return {
-    total: items.length,
-    hidden: Math.max(0, items.length - limit),
-    items: items.slice(0, limit)
-  };
-}
-
-function cachedBilibiliTitlesByBvid() {
-  const titles = new Map();
-  for (const entry of danmakuCache.values()) {
-    const text = entry?.value || "";
-    const bvid = normalizeBvid(headerValue(text, "bvid"));
-    const title = headerValue(text, "title");
-    if (bvid && title && !titles.has(bvid)) titles.set(bvid, title);
-  }
-  return titles;
-}
-
-async function backfillDashboardBilibiliTitles(limit = 4) {
-  if (!vcrIdStore?.available) return;
-  pruneAllExpiredCaches();
-  const cachedTitles = cachedBilibiliTitlesByBvid();
-  const candidates = [];
-  const seen = new Set();
-  for (const record of Object.values(vcrIdStore.data.records || {})) {
-    if (!record || record.provider !== "bilibili") continue;
-    const bvid = normalizeBvid(record.bvid);
-    const aid = normalizeAid(record.aid);
-    const key = bvid || (aid ? `av${aid}` : "");
-    if (!key || seen.has(key)) continue;
-    if (String(record.title || cachedTitles.get(bvid) || "").trim()) continue;
-    seen.add(key);
-    candidates.push({
-      bvid,
-      aid,
-      lastAccessAt: Number(record.lastAccessAt || record.updatedAt || record.createdAt || 0)
-    });
-  }
-
-  for (const item of candidates
-    .sort((left, right) => right.lastAccessAt - left.lastAccessAt)
-    .slice(0, limit)) {
-    try {
-      const view = (await getVideoView({
-        bvid: item.bvid,
-        aid: item.aid,
-        normalizedUrl: item.bvid
-          ? `https://www.bilibili.com/video/${item.bvid}/`
-          : `https://www.bilibili.com/video/av${item.aid}/`
-      })).value;
-      const title = String(view.title || "").trim();
-      if (!title) continue;
-      let changed = false;
-      for (const record of Object.values(vcrIdStore.data.records || {})) {
-        const sameBvid = item.bvid && normalizeBvid(record.bvid) === item.bvid;
-        const sameAid = item.aid && normalizeAid(record.aid) === item.aid;
-        if (record?.provider === "bilibili" && (sameBvid || sameAid) && !String(record.title || "").trim()) {
-          record.title = title;
-          record.updatedAt = Date.now();
-          changed = true;
-        }
-      }
-      if (changed) vcrIdStore.save();
-    } catch (error) {
-      console.warn(`[dashboard] failed to backfill title for ${item.bvid || `av${item.aid}`}: ${error.message || error}`);
-    }
-  }
-}
-
-function buildHistoryDashboard(requestUrl) {
-  const page = readPositiveInt(requestUrl?.searchParams?.get("historyPage"), 1);
-  const pageSize = readPositiveInt(requestUrl?.searchParams?.get("historyPageSize"), DASHBOARD_HISTORY_PAGE_SIZE);
-  const history = historyStore?.list({ page, pageSize }) || { page: 1, pageSize, total: 0, totalPages: 1, items: [] };
-  const cards = history.items.map((item) => renderHistoryCard(item)).join("");
-  return {
-    ...history,
-    cards,
-    summary: `<p class="subtle">&#20849; ${formatNumber(history.total)} &#26465;&#21382;&#21490;&#35760;&#24405;&#65292;&#31532; ${formatNumber(history.page)} / ${formatNumber(history.totalPages)} &#39029;&#12290;</p>`,
-    pagination: renderHistoryPagination(history)
-  };
-}
-
-function renderHistoryPagination(history) {
-  if (!history || history.totalPages <= 1) return "";
-  const pages = [];
-  const start = Math.max(1, history.page - 2);
-  const end = Math.min(history.totalPages, history.page + 2);
-  if (history.page > 1) pages.push(`<a class="page-link" href="/?historyPage=${history.page - 1}">&#19978;&#19968;&#39029;</a>`);
-  for (let page = start; page <= end; page++) {
-    pages.push(page === history.page
-      ? `<span class="page-link active">${formatNumber(page)}</span>`
-      : `<a class="page-link" href="/?historyPage=${page}">${formatNumber(page)}</a>`);
-  }
-  if (history.page < history.totalPages) pages.push(`<a class="page-link" href="/?historyPage=${history.page + 1}">&#19979;&#19968;&#39029;</a>`);
-  return `<nav class="pagination">${pages.join("")}</nav>`;
-}
-
-function renderHistoryCard(item) {
-  const providerLabel = item.provider === "netease" ? "网易云" : item.provider === "bilibili" ? "B 站" : item.provider || "-";
-  const typeLabel = historyTypeLabel(item);
-  const title = firstNonEmpty(item.title, item.bvid, item.songId, item.playlistId, item.key);
-  const eventSummary = Object.entries(item.events || {})
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 4)
-    .map(([name, count]) => `${historyEventLabel(name)} ${formatNumber(count)}`)
-    .join(" / ") || "-";
-  const link = historySourceLink(item);
-  return `
-          <article class="cache-card">
-            <p class="eyebrow">${escapeHtml(providerLabel)} · ${escapeHtml(typeLabel)}</p>
-            <h2>${escapeHtml(title)}</h2>
-            <dl class="grid">
-              <div><dt>&#26631;&#35782;</dt><dd>${escapeHtml(historyIdentity(item))}</dd></div>
-              <div><dt>&#35760;&#24405;&#27425;&#25968;</dt><dd>${formatNumber(item.seenCount)}</dd></div>
-              <div><dt>&#20107;&#20214;</dt><dd>${escapeHtml(eventSummary)}</dd></div>
-              <div><dt>vcrid ID</dt><dd>${formatNumber((item.vcrids || []).length)}</dd></div>
-              <div><dt>P / &#27468;&#26354;&#25968;</dt><dd>${formatNumber(item.pagesCount || 0)}</dd></div>
-              <div><dt>&#26368;&#36817;&#35760;&#24405;</dt><dd>${item.lastSeenAt ? `${escapeHtml(formatDuration(Math.floor((Date.now() - item.lastSeenAt) / 1000)))}&#21069;` : "-"}</dd></div>
-              <div><dt>&#39318;&#27425;&#35760;&#24405;</dt><dd>${item.firstSeenAt ? escapeHtml(formatDateTime(item.firstSeenAt)) : "-"}</dd></div>
-              <div><dt>&#38142;&#25509;</dt><dd>${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel(item))}</a>` : "-"}</dd></div>
-            </dl>
-          </article>`;
 }
 
 function historyTypeLabel(item) {
@@ -5091,22 +4958,8 @@ function historyTypeLabel(item) {
   if (item.provider === "bilibili" && item.contentType === "list") return "列表/合集";
   if (item.provider === "netease" && item.contentType === "playlist") return "歌单";
   if (item.provider === "netease" && item.contentType === "song") return "单曲";
+  if (item.provider === "custom") return "自定义视频";
   return item.contentType || "-";
-}
-
-function historyEventLabel(value) {
-  return ({
-    imported: "导入",
-    player_redirect: "播放",
-    player_manifest: "文本",
-    player_danmaku: "弹幕",
-    api_pages: "清单",
-    api_resolve: "解析",
-    api_danmaku: "弹幕",
-    vcrid_player: "vcrid播放",
-    vcrid_danmaku: "vcrid弹幕",
-    vcrid_resolve: "vcrid解析"
-  })[value] || value;
 }
 
 function historyIdentity(item) {
@@ -5126,265 +4979,68 @@ function historySourceLink(item) {
   return "";
 }
 
-function linkLabel(item) {
-  if (item.provider === "bilibili") return firstNonEmpty(item.bvid, item.aid ? `av${item.aid}` : "", "打开");
-  if (item.provider === "netease" && item.contentType === "playlist") return `playlist ${item.playlistId || ""}`.trim();
-  if (item.provider === "netease" && item.contentType === "song") return `song ${item.songId || ""}`.trim();
-  return "打开";
-}
 
-function buildProviderHistoryDashboard(requestUrl) {
-  const rawProvider = String(requestUrl?.searchParams?.get("historyProvider") || "bilibili").toLowerCase();
-  const provider = rawProvider === "netease" ? "netease" : "bilibili";
-  const page = readPositiveInt(requestUrl?.searchParams?.get("historyPage"), 1);
-  const pageSize = readPositiveInt(requestUrl?.searchParams?.get("historyPageSize"), DASHBOARD_HISTORY_PAGE_SIZE);
-  const history = historyStore?.list({ page, pageSize, provider }) || { page: 1, pageSize, total: 0, totalPages: 1, items: [] };
-  const providerTitle = provider === "netease" ? "&#32593;&#26131;&#20113;&#38899;&#20048;" : "B &#31449;";
+function buildUsageStats() {
   return {
-    ...history,
-    provider,
-    cards: history.items.map((item) => renderProviderHistoryCard(item)).join(""),
-    tabs: renderProviderHistoryTabs(provider),
-    summary: `<p class="subtle">${providerTitle} &#20849; ${formatNumber(history.total)} &#26465;&#21382;&#21490;&#35760;&#24405;&#65292;&#31532; ${formatNumber(history.page)} / ${formatNumber(history.totalPages)} &#39029;&#12290;</p>`,
-    pagination: renderProviderHistoryPagination(history, provider),
-    jumpForm: renderProviderHistoryJumpForm(history, provider)
+    emittedDanmakuRows: stats.emittedDanmakuRows,
+    totalPlayRedirects: stats.playerRedirects,
+    bilibiliVideoRedirects: Math.max(0, stats.playerRedirects - stats.liveRedirects - stats.neteaseRedirects - stats.customRedirects),
+    bilibiliLiveRedirects: stats.liveRedirects,
+    neteaseRedirects: stats.neteaseRedirects,
+    customRedirects: stats.customRedirects,
+    danmakuRequests: stats.playerDanmakuRequests + stats.apiDanmakuRequests
   };
 }
 
-function renderProviderHistoryTabs(provider) {
-  return `<nav class="tabs">
-    <a class="tab-link ${provider === "bilibili" ? "active" : ""}" href="/?historyProvider=bilibili">B &#31449;</a>
-    <a class="tab-link ${provider === "netease" ? "active" : ""}" href="/?historyProvider=netease">&#32593;&#26131;&#20113;&#38899;&#20048;</a>
-  </nav>`;
-}
-
-function providerHistoryPageHref(provider, page) {
-  return `/?historyProvider=${encodeURIComponent(provider)}&historyPage=${Math.max(1, Number(page || 1))}`;
-}
-
-function renderProviderHistoryPagination(history, provider) {
-  if (!history || history.totalPages <= 1) return "";
-  const links = [];
-  const start = Math.max(1, history.page - 2);
-  const end = Math.min(history.totalPages, history.page + 2);
-  if (history.page > 1) links.push(`<a class="page-link" href="${providerHistoryPageHref(provider, history.page - 1)}">&#19978;&#19968;&#39029;</a>`);
-  for (let page = start; page <= end; page++) {
-    links.push(page === history.page
-      ? `<span class="page-link active">${formatNumber(page)}</span>`
-      : `<a class="page-link" href="${providerHistoryPageHref(provider, page)}">${formatNumber(page)}</a>`);
-  }
-  if (history.page < history.totalPages) links.push(`<a class="page-link" href="${providerHistoryPageHref(provider, history.page + 1)}">&#19979;&#19968;&#39029;</a>`);
-  return `<nav class="pagination">${links.join("")}</nav>`;
-}
-
-function renderProviderHistoryJumpForm(history, provider) {
-  if (!history || history.totalPages <= 1) return "";
-  return `<form class="jump-form" method="get" action="/">
-    <input type="hidden" name="historyProvider" value="${escapeHtml(provider)}">
-    <label for="historyPageJump">&#36339;&#21040;</label>
-    <input id="historyPageJump" name="historyPage" type="number" min="1" max="${history.totalPages}" value="${history.page}">
-    <span>/ ${formatNumber(history.totalPages)} &#39029;</span>
-    <button type="submit">&#36339;&#36716;</button>
-  </form>`;
-}
-
-function renderProviderHistoryCard(item) {
-  const providerLabel = item.provider === "netease" ? "&#32593;&#26131;&#20113;" : item.provider === "bilibili" ? "B &#31449;" : escapeHtml(item.provider || "-");
-  const typeLabel = providerHistoryTypeLabel(item);
-  const title = firstNonEmpty(item.title, item.bvid, item.songId, item.playlistId, item.key);
-  const eventSummary = Object.entries(item.events || {})
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 4)
-    .map(([name, count]) => `${providerHistoryEventLabel(name)} ${formatNumber(count)}`)
-    .join(" / ") || "-";
-  const link = historySourceLink(item);
-  return `
-          <article class="cache-card">
-            <p class="eyebrow">${providerLabel} · ${typeLabel}</p>
-            <h2>${escapeHtml(title)}</h2>
-            <dl class="grid">
-              <div><dt>&#26631;&#35782;</dt><dd>${escapeHtml(historyIdentity(item))}</dd></div>
-              <div><dt>&#35760;&#24405;&#27425;&#25968;</dt><dd>${formatNumber(item.seenCount)}</dd></div>
-              <div><dt>&#20107;&#20214;</dt><dd>${eventSummary}</dd></div>
-              <div><dt>vcrid ID</dt><dd>${formatNumber((item.vcrids || []).length)}</dd></div>
-              <div><dt>P / &#27468;&#26354;&#25968;</dt><dd>${formatNumber(item.pagesCount || 0)}</dd></div>
-              <div><dt>&#26368;&#36817;&#35760;&#24405;</dt><dd>${item.lastSeenAt ? `${escapeHtml(formatDuration(Math.floor((Date.now() - item.lastSeenAt) / 1000)))}&#21069;` : "-"}</dd></div>
-              <div><dt>&#39318;&#27425;&#35760;&#24405;</dt><dd>${item.firstSeenAt ? escapeHtml(formatDateTime(item.firstSeenAt)) : "-"}</dd></div>
-              <div><dt>&#38142;&#25509;</dt><dd>${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkLabel(item))}</a>` : "-"}</dd></div>
-            </dl>
-          </article>`;
-}
-
-function providerHistoryTypeLabel(item) {
-  if (item.provider === "bilibili" && item.contentType === "video") return "&#35270;&#39057;";
-  if (item.provider === "bilibili" && item.contentType === "live") return "&#30452;&#25773;";
-  if (item.provider === "bilibili" && item.contentType === "list") return "&#21015;&#34920;/&#21512;&#38598;";
-  if (item.provider === "netease" && item.contentType === "playlist") return "&#27468;&#21333;";
-  if (item.provider === "netease" && item.contentType === "song") return "&#21333;&#26354;";
-  return escapeHtml(item.contentType || "-");
-}
-
-function providerHistoryEventLabel(value) {
-  return ({
-    imported: "&#23548;&#20837;",
-    player_redirect: "&#25773;&#25918;",
-    player_manifest: "&#25991;&#26412;",
-    player_danmaku: "&#24377;&#24149;",
-    api_pages: "&#28165;&#21333;",
-    api_resolve: "&#35299;&#26512;",
-    api_danmaku: "&#24377;&#24149;",
-    vcrid_player: "vcrid&#25773;&#25918;",
-    vcrid_danmaku: "vcrid&#24377;&#24149;",
-    vcrid_resolve: "vcrid&#35299;&#26512;"
-  })[value] || escapeHtml(value);
-}
-
-function renderDashboard(requestUrl = null) {
-  pruneAllExpiredCaches();
-  const uptimeSeconds = Math.floor((Date.now() - stats.startedAt) / 1000);
-  const biliRedirects = Math.max(0, stats.playerRedirects - stats.neteaseRedirects - stats.liveRedirects);
-  const vcridCount = vcrIdStore ? Object.keys(vcrIdStore.data.records || {}).length : 0;
-  const vcridUsagePercent = vcrIdStore ? Math.round(vcrIdStore.usageRatio() * 10000) / 100 : 0;
-  const vcridFreeCount = Math.max(0, VCRID_MAX - vcridCount);
-  const vcridFreePercent = Math.max(0, Math.round((1 - (vcrIdStore ? vcrIdStore.usageRatio() : 0)) * 10000) / 100);
-  const lastGc = vcrIdStore?.lastGc || {};
-  const historyDashboard = buildProviderHistoryDashboard(requestUrl || new URL("http://localhost/"));
-  const historyTotal = Object.keys(historyStore?.data?.records || {}).length;
-  const bilibiliHistoryCount = Object.values(historyStore?.data?.records || {}).filter((record) => record.provider === "bilibili").length;
-  const neteaseHistoryCount = Object.values(historyStore?.data?.records || {}).filter((record) => record.provider === "netease").length;
+function renderDashboard() {
+  const usage = buildUsageStats();
+  const details = [
+    ["播放跳转", usage.totalPlayRedirects],
+    ["弹幕及清单请求", usage.danmakuRequests],
+    ["B 站视频跳转", usage.bilibiliVideoRedirects],
+    ["B 站直播跳转", usage.bilibiliLiveRedirects],
+    ["网易云播放跳转", usage.neteaseRedirects],
+    ["自定义视频跳转", usage.customRedirects]
+  ];
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="15">
-  <link rel="icon" type="image/png" href="${PAULKOI_LOGO_PATH}">
-  <link rel="apple-touch-icon" href="${PAULKOI_LOGO_PATH}">
-  <title>PaulKoiPlayer &#35299;&#26512;&#26381;&#21153;</title>
+  <meta http-equiv="refresh" content="30">
+  <link rel="icon" href="${PAULKOI_LOGO_PATH}">
+  <title>PaulKoiPlayer 服务统计</title>
   <style>
-    :root { --bg:#f6f7f9; --panel:#fff; --soft:#eef6f4; --text:#172026; --muted:#65717b; --line:#dce3e8; --green:#0f8f72; --shadow:0 16px 40px rgba(25,38,49,.10); }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
-    .shell { max-width:1180px; margin:0 auto; padding:32px 20px 48px; }
-    header { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; padding-bottom:24px; border-bottom:1px solid var(--line); }
-    .brand { display:flex; align-items:center; gap:16px; min-width:0; }
-    .brand-logo { width:72px; height:72px; object-fit:contain; flex:0 0 auto; filter:drop-shadow(0 10px 18px rgba(0,138,210,.18)); }
-    .brand-copy { min-width:0; }
-    h1 { margin:0; font-size:34px; line-height:1.15; }
-    h2 { margin:0 0 16px; font-size:20px; }
-    .eyebrow { margin:0 0 8px; color:var(--green); font-size:13px; font-weight:700; }
-    .subtle { margin:10px 0 0; color:var(--muted); font-size:15px; }
-    .badge { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:0 12px; border:1px solid #b9ddd5; border-radius:8px; background:var(--soft); color:#0a604e; font-weight:700; white-space:nowrap; }
-    .badge:before { content:""; width:8px; height:8px; border-radius:999px; background:var(--green); }
-    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin:24px 0; }
-    .stat,.panel,.cache-card { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:var(--shadow); }
-    .stat { min-height:118px; padding:18px; }
-    .stat span { display:block; color:var(--muted); font-size:14px; }
-    .stat strong { display:block; margin-top:10px; font-size:32px; line-height:1; }
-    .stat small { display:block; margin-top:12px; color:var(--muted); }
-    .stat-primary { grid-column:1 / -1; min-height:150px; padding:24px 28px; }
-    .stat-primary span { font-size:16px; }
-    .stat-primary strong { font-size:54px; line-height:.95; letter-spacing:0; }
-    .panel { margin-top:16px; padding:22px; }
-    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 18px; margin:0; }
-    dt { color:var(--muted); font-size:13px; }
-    dd { margin:4px 0 0; overflow-wrap:anywhere; font-size:15px; font-weight:650; }
-    code { display:block; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:8px; background:#f2f5f7; color:#20313d; font-family:"Cascadia Mono",Consolas,monospace; font-size:13px; white-space:nowrap; }
-    a { color:var(--green); font-weight:700; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .cache-list { display:grid; gap:14px; }
-    .cache-card { padding:18px; background:#fbfcfd; }
-    .tabs { display:flex; flex-wrap:wrap; gap:10px; margin:0 0 14px; }
-    .tab-link { display:inline-flex; align-items:center; min-height:38px; padding:0 16px; border:1px solid var(--line); border-radius:8px; background:#fff; color:#20313d; font-weight:800; }
-    .tab-link.active { background:var(--green); border-color:var(--green); color:#fff; }
-    .pagination { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
-    .page-link { display:inline-flex; align-items:center; min-height:34px; padding:0 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:#20313d; font-weight:700; }
-    .page-link.active { background:var(--green); border-color:var(--green); color:#fff; }
-    .jump-form { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:14px 0 0; color:var(--muted); font-size:14px; }
-    .jump-form input[type="number"] { width:96px; min-height:34px; padding:0 10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:inherit; }
-    .jump-form button { min-height:34px; padding:0 14px; border:0; border-radius:8px; background:var(--green); color:#fff; font-weight:800; cursor:pointer; }
-    .empty { padding:28px; border:1px dashed #b8c4cc; border-radius:8px; color:var(--muted); background:#fbfcfd; text-align:center; }
-    @media (max-width:880px) { header { align-items:flex-start; flex-direction:column; } .brand-logo { width:60px; height:60px; } .stats,.grid { grid-template-columns:1fr; } h1 { font-size:28px; } }
+    body { margin:0; background:#f6f7f9; color:#172026; font-family:system-ui,"Microsoft YaHei",sans-serif; }
+    main { max-width:960px; margin:auto; padding:32px 20px; }
+    header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:24px; }
+    header img { width:56px; height:56px; object-fit:contain; }
+    h1 { margin:0; font-size:clamp(20px,5vw,30px); }
+    header a { margin-left:auto; color:#096a56; font-weight:650; }
+    .primary, .stat { background:#fff; border:1px solid #dce3e8; border-radius:10px; padding:20px; }
+    .primary { background:#eef6f4; }
+    .primary strong { display:block; margin:8px 0; font-size:clamp(34px,8vw,62px); line-height:1.1; }
+    .primary small, .stat span { color:#495966; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:12px; margin-top:12px; }
+    .stat strong { display:block; margin-top:8px; font-size:25px; }
   </style>
 </head>
 <body>
-  <main class="shell">
+  <main>
     <header>
-      <div class="brand">
-        <img class="brand-logo" src="${PAULKOI_LOGO_PATH}" alt="PaulKoiPlayer">
-        <div class="brand-copy">
-          <p class="eyebrow">VRChat &#24377;&#24149;&#20195;&#29702;</p>
-          <h1>PaulKoiPlayer&#35299;&#26512;&#26381;&#21153;</h1>
-        </div>
-      </div>
-      <div class="badge">&#26381;&#21153;&#27491;&#24120;</div>
+      <img src="${PAULKOI_LOGO_PATH}" alt="" width="56" height="56">
+      <h1>PaulKoiPlayer 服务统计</h1>
+      <a href="/admin">管理后台</a>
     </header>
-    <section class="stats">
-      <div class="stat stat-primary"><span>&#24050;&#21457;&#23556;&#24377;&#24149;</span><strong>${formatNumber(stats.emittedDanmakuRows)}</strong><small>&#32047;&#35745;&#36820;&#22238;&#34892;&#25968;</small></div>
-      <div class="stat"><span>B &#31449;&#30452;&#38142;&#36339;&#36716;</span><strong>${formatCompactNumber(biliRedirects)}</strong><small>/player 302 durl</small></div>
-      <div class="stat"><span>B &#31449;&#30452;&#25773;&#36339;&#36716;</span><strong>${formatCompactNumber(stats.liveRedirects)}</strong><small>/player 302 m3u8</small></div>
-      <div class="stat"><span>&#32593;&#26131;&#20113;&#35299;&#26512;</span><strong>${formatCompactNumber(stats.neteaseRedirects)}</strong><small>302 music.126.net</small></div>
-      <div class="stat"><span>B &#31449;&#35270;&#39057;&#28165;&#21333;&#35299;&#26512;</span><strong>${formatNumber(stats.bilibiliPagesManifestRequests)}</strong><small>/api/pages bilibili</small></div>
-      <div class="stat"><span>&#32593;&#26131;&#20113;&#27468;&#21333;&#35299;&#26512;</span><strong>${formatNumber(stats.neteasePlaylistManifestRequests)}</strong><small>/api/pages netease-playlist</small></div>
-      <div class="stat"><span>&#21382;&#21490;&#35760;&#24405;</span><strong>${formatNumber(historyTotal)}</strong><small>B &#31449; / &#32593;&#26131;&#20113;&#32479;&#19968;&#35760;&#24405;</small></div>
-      <div class="stat"><span>B &#31449;&#35760;&#24405;</span><strong>${formatNumber(bilibiliHistoryCount)}</strong><small>&#35270;&#39057;&#12289;&#30452;&#25773;&#12289;&#21015;&#34920;</small></div>
-      <div class="stat"><span>&#32593;&#26131;&#20113;&#35760;&#24405;</span><strong>${formatNumber(neteaseHistoryCount)}</strong><small>&#21333;&#26354;&#21644;&#27468;&#21333;</small></div>
-      <div class="stat"><span>vcrid ID &#20351;&#29992;</span><strong>${formatNumber(vcridCount)}</strong><small>&#21097;&#20313; ${formatNumber(vcridFreeCount)} / ${vcridFreePercent}%</small></div>
-      <div class="stat"><span>&#24377;&#24149;&#35831;&#27714;</span><strong>${formatCompactNumber(stats.playerDanmakuRequests)}</strong><small>/player #YBDM/1</small></div>
-      <div class="stat"><span>&#32531;&#23384;&#21629;&#20013;</span><strong>${formatCompactNumber(cacheStats.view.hits + cacheStats.video.hits + cacheStats.danmaku.hits)}</strong><small>view/video/danmaku</small></div>
-      <div class="stat"><span>&#38480;&#27969;&#25318;&#25130;</span><strong>${formatCompactNumber(stats.rateLimited)}</strong><small>429 too many requests</small></div>
-      <div class="stat"><span>URL &#30333;&#21517;&#21333;&#25318;&#25130;</span><strong>${formatCompactNumber(stats.unsupportedUrlRejected)}</strong><small>unsupported_url</small></div>
-      <div class="stat"><span>&#22833;&#36133;&#32531;&#23384;</span><strong>${formatCompactNumber(stats.failureCacheHits)}</strong><small>${failureCache.size} active entries</small></div>
-      <div class="stat"><span>&#19978;&#28216;&#36229;&#26102;</span><strong>${formatCompactNumber(stats.upstreamTimeouts)}</strong><small>Bilibili/NetEase timeout</small></div>
-    </section>
-    <section class="panel">
-      <h2>&#36816;&#34892;&#20449;&#24687;</h2>
-      <div class="grid">
-        <code>&#36816;&#34892;&#26102;&#38271;&#65306;${escapeHtml(formatDuration(uptimeSeconds))}</code>
-        <code>&#21551;&#21160;&#26102;&#38388;&#65306;${escapeHtml(formatDateTime(stats.startedAt))}</code>
-        <code>view/video/danmaku cache: ${viewCache.size}/${videoUrlCache.size}/${danmakuCache.size}</code>
-        <code>cache limits: ${VIEW_CACHE_MAX_ENTRIES}/${VIDEO_URL_CACHE_MAX_ENTRIES}/${DANMAKU_CACHE_MAX_ENTRIES}, dashboard: ${DASHBOARD_DANMAKU_MAX_ENTRIES}</code>
-        <code>danmaku disk cache: initial ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_INITIAL_TTL_MS / 1000)))}, refresh ${escapeHtml(formatDuration(Math.floor(DANMAKU_DISK_CACHE_REFRESH_MS / 1000)))}</code>
-        <code>rate limit: /player ${RATE_LIMIT_PLAYER}/${Math.floor(RATE_LIMIT_WINDOW_MS / 1000)}s, cooldown ${Math.floor(RATE_LIMIT_COOLDOWN_MS / 1000)}s</code>
-        <code>failure cache: ${failureCache.size}/${FAILURE_CACHE_MAX_ENTRIES}, ttl ${Math.floor(FAILURE_CACHE_TTL_MS / 1000)}s</code>
-        <code>inflight: ${inflight.size}</code>
-        <code>vcrid store: ${vcridCount}/${VCRID_MAX}, ${vcridUsagePercent}%, ${vcrIdStore?.available ? "available" : "unavailable"}</code>
-        <code>vcrid gc: ${VCRID_GC_ENABLED ? "enabled" : "disabled"}, threshold ${Math.round(VCRID_GC_USAGE_THRESHOLD * 100)}%, target ${Math.round(VCRID_GC_TARGET_USAGE * 100)}%, idle ${VCRID_GC_MIN_UNUSED_DAYS}d</code>
-        <code>vcrid gc result: runs ${formatNumber(stats.vcridGcRuns)}, deleted ${formatNumber(stats.vcridGcDeleted)}, last ${escapeHtml(lastGc.reason || "none")}</code>
-        <code>history store: ${formatNumber(historyTotal)}, ${historyStore?.available ? "available" : "unavailable"}</code>
-        <code>NetEase song/playlist: ${formatNumber(stats.neteaseSongRedirects)}/${formatNumber(stats.neteasePlaylistRedirects)}</code>
-        <code>/api/resolve: ${stats.resolveRequests}</code>
-        <code>/api/pages: ${stats.apiPagesRequests}</code>
-        <code>/api/lyrics: ${stats.apiLyricsRequests}, cache ${neteaseLyricsCache.size}/${NETEASE_LYRICS_CACHE_MAX_ENTRIES}</code>
-        <code>unsupported url rejected: ${stats.unsupportedUrlRejected}</code>
-        <code>legacy rejected: ${stats.legacyRejected}</code>
+    <section aria-label="服务统计">
+      <div class="primary">
+        <span>累计返回弹幕</span>
+        <strong>${formatNumber(usage.emittedDanmakuRows)}</strong>
+        <small>按服务器返回的弹幕条数统计</small>
       </div>
-    </section>
-    <section class="panel">
-      <h2>&#32593;&#26131;&#20113;&#38899;&#20048;&#35299;&#26512;</h2>
-      <p class="subtle">&#24863;&#35874; <a href="https://music.znnu.com/" target="_blank" rel="noopener noreferrer">music.znnu.com</a> &#25552;&#20379;&#31532;&#19977;&#26041;&#35299;&#26512;&#26381;&#21153;&#12290;</p>
-    </section>
-    <section class="panel">
-      <h2>&#35299;&#26512;&#21382;&#21490;&#35760;&#24405;</h2>
-      ${historyDashboard.tabs}
-      ${historyDashboard.summary}
-      <div class="cache-list">${historyDashboard.cards || `<div class="empty">&#26242;&#26080;&#35299;&#26512;&#21382;&#21490;&#35760;&#24405;</div>`}</div>
-      ${historyDashboard.pagination}
-      ${historyDashboard.jumpForm}
-    </section>
-    <section class="panel">
-      <h2>&#33258;&#23450;&#20041;&#24377;&#24149;&#19982;&#26412;&#22320;&#30452;&#38142;</h2>
-      <p class="subtle">&#25903;&#25345;&#37197;&#32622;&#33258;&#23450;&#20041; ID&#12289;&#30452;&#38142;&#36339;&#36716;&#19982;&#19978;&#20256; XML/JSON/YBDM &#24377;&#24149;&#12290;<a href="/admin">&#25171;&#24320;&#31649;&#29702;&#38754;&#26495; (/admin)</a></p>
-    </section>
-    <section class="panel">
-      <h2>&#25509;&#21475;</h2>
       <div class="grid">
-        <code>GET /player/?url=&lt;Bilibili URL or Custom ID&gt;</code>
-        <code>GET /player/?__dm=1&amp;url=&lt;Bilibili URL or Custom ID&gt;</code>
-        <code>GET /api/resolve?url=&lt;Bilibili URL or Custom ID&gt;</code>
-        <code>GET /api/pages?url=&lt;Bilibili URL or Custom ID&gt;</code>
-        <code>GET /admin</code>
-        <code>GET /api/cache/stats</code>
+        ${details.map(([label, value]) => `<div class="stat"><span>${label}</span><strong>${formatNumber(value)}</strong></div>`).join("")}
       </div>
     </section>
   </main>
@@ -5709,67 +5365,8 @@ function escapeField(value) {
     .replace(/\n/g, "\\n");
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
-}
-
-function formatCompactNumber(value) {
-  const number = Number(value || 0);
-  if (!Number.isFinite(number)) return "0";
-  if (Math.abs(number) >= 100000000) {
-    const yi = number / 100000000;
-    return `${formatCompactDecimal(yi)}&#20159;`;
-  }
-  if (Math.abs(number) >= 1000000) {
-    const wan = number / 10000;
-    return `${formatCompactDecimal(wan)}&#19975;`;
-  }
-  if (Math.abs(number) >= 1000) {
-    const thousand = number / 1000;
-    return `${formatCompactDecimal(thousand)}K`;
-  }
-  return formatNumber(number);
-}
-
-function formatCompactDecimal(value) {
-  const rounded = Math.abs(value) >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-  return new Intl.NumberFormat("zh-CN", {
-    maximumFractionDigits: 1
-  }).format(rounded);
-}
-
-function formatDateTime(value) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: DISPLAY_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(new Date(value));
-}
-
-function formatDuration(seconds) {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const rest = seconds % 60;
-  const parts = [];
-  if (days) parts.push(`${days}d`);
-  if (hours) parts.push(`${hours}h`);
-  if (minutes) parts.push(`${minutes}m`);
-  parts.push(`${rest}s`);
-  return parts.join(" ");
 }
 
 function isMainModule() {

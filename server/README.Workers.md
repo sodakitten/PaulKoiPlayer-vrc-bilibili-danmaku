@@ -2,7 +2,7 @@
 
 This is an experimental low-cost deployment path for the PaulKoiPlayer resolver server.
 
-The Docker server remains the stable deployment target. The Worker version keeps the core resolver APIs and removes Docker-only behavior such as filesystem-backed persistent counters.
+The Docker server remains the persistent backend. Set `BILI_DOCKER_ORIGIN` to the updated Docker service to proxy the public dashboard, `/api/cache/stats`, admin routes and media requests carrying `__world`. The Docker service stores world usage and enforces admin authentication.
 
 ## What Works
 
